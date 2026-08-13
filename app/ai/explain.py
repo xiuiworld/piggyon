@@ -89,10 +89,13 @@ def build_cards(run: dict[str, Any]) -> dict[str, Any]:
 
     generated = _generate(run, outcomes)
     if generated is None:
+        # Same keys as the generated path. A response whose shape depends on
+        # whether a key was configured makes the client handle two contracts.
         return {
             "cards": list(templates.values()),
             "source": "TEMPLATE",
             "replaced_order_ids": [],
+            "replaced_reasons": {},
         }
 
     allowed_ids = {o["order_id"] for o in outcomes}

@@ -129,3 +129,37 @@ def test_stored_snapshot_conforms(solved: dict, client: TestClient, spec: dict) 
     stored = client.app.state.store.get_scenario(solved["scenario_id"])
 
     _validate(spec, "ScenarioInputSnapshot", stored["input_snapshot"])
+
+
+def test_intake_response_conforms(client: TestClient, spec: dict) -> None:
+    body = client.post(
+        "/v1/intake/orders",
+        json={
+            "text": (
+                Path(__file__).resolve().parent.parent
+                / "data" / "samples" / "intake-01.txt"
+            ).read_text(encoding="utf-8")
+        },
+    ).json()
+
+    _validate(spec, "IntakeResult", body)
+
+
+def test_explanation_response_conforms(
+    client: TestClient, solved: dict, spec: dict
+) -> None:
+    body = client.get(f"/v1/runs/{solved['run']['run_id']}/explanation").json()
+
+    _validate(spec, "ExplanationResult", body)
+
+
+def test_every_served_path_is_in_the_spec(client: TestClient, spec: dict) -> None:
+    """The front end generates its client from this file, so a path missing
+    from it is a path the front end cannot call."""
+    served = {
+        path
+        for path in client.get("/openapi.json").json()["paths"]
+        if not path.startswith("/docs")
+    }
+
+    assert served <= set(spec["paths"]), served - set(spec["paths"])
