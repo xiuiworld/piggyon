@@ -151,3 +151,60 @@ def test_ai_status_reports_availability(client: TestClient) -> None:
 
     assert response.status_code == 200
     assert "llm_available" in response.json()
+
+
+# --- intake contract from docs/10-ai-usage.md --------------------------------
+
+
+def test_partial_dimensions_are_kept_not_discarded() -> None:
+    """A stated length with an unstated width must survive as exactly that.
+
+    Nulling the whole block loses the distinction between "not measured" and
+    "not mentioned", which is the gap the operator has to chase.
+    """
+    draft = intake._sanitise({"dimensions_mm": {"length": 13600, "height": 3900}})
+
+    assert draft["dimensions_mm"] == {"length": 13600, "width": None, "height": 3900}
+
+
+def test_missing_fields_names_the_axis_not_the_block() -> None:
+    missing = intake._missing_fields(
+        {"dimensions_mm": {"length": 13600, "width": None, "height": 3900}}
+    )
+
+    assert "dimensions_mm.width" in missing
+    assert "dimensions_mm" not in missing
+
+
+def test_terminal_ids_outside_the_closed_list_are_dropped() -> None:
+    vocabulary = {"terminal_ids": ["TRM-A (합류 터미널 A)", "TRM-B (도착 터미널 B)"]}
+
+    draft = intake._sanitise(
+        {"origin_terminal_ids": ["TRM-A"], "destination_terminal_ids": ["TRM-ZZ"]},
+        vocabulary,
+    )
+
+    assert draft["origin_terminal_ids"] == ["TRM-A"]
+    assert draft["destination_terminal_ids"] is None
+
+
+def test_response_carries_evidence_and_assumption_fields() -> None:
+    result = intake.structure_request((SAMPLES / "intake-01.txt").read_text(encoding="utf-8"))
+
+    for key in ("field_evidence", "assumptions_flagged", "review_reasons"):
+        assert key in result
+
+
+def test_review_reasons_pair_each_gap_with_a_code() -> None:
+    result = intake.structure_request((SAMPLES / "intake-02.txt").read_text(encoding="utf-8"))
+
+    assert result["review_reasons"]
+    assert all(r["reason_code"] == "MISSING_REQUIRED_FIELD" for r in result["review_reasons"])
+    assert {r["field"] for r in result["review_reasons"]} == set(result["missing_fields"])
+
+
+def test_default_vocabulary_comes_from_the_canonical_scenario() -> None:
+    vocabulary = intake.default_vocabulary()
+
+    assert any(entry.startswith("TRM-A") for entry in vocabulary["terminal_ids"])
+    assert vocabulary["priority_class"] == ["P1", "P2", "P3"]

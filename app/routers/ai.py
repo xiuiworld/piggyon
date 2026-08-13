@@ -18,6 +18,9 @@ class IntakeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     text: str = Field(min_length=1)
+    # Relative times ("내일 오전") can only be resolved against a reference
+    # instant; without one the model would have to invent a date.
+    as_of: str | None = None
 
 
 @router.get("/ai/status", summary="Whether the generative layer is configured")
@@ -27,7 +30,7 @@ def ai_status() -> dict[str, object]:
 
 @router.post("/intake/orders", summary="Structure an unstructured shipping request")
 def structure_intake(payload: IntakeRequest) -> dict:
-    return intake.structure_request(payload.text)
+    return intake.structure_request(payload.text, as_of=payload.as_of)
 
 
 @router.get(
