@@ -24,6 +24,19 @@ from app.ai import client, explain
 
 MAX_QUESTION_CHARS = 500
 
+# `used_order_ids` is membership-tested against a set, so an entry that is not a
+# string is not merely wrong -- a dict is unhashable and the test raises. Held to
+# strings by the API, and filtered again below for the schema-less retry path.
+ANSWER_SCHEMA: dict = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["answer", "used_order_ids"],
+    "properties": {
+        "answer": {"type": "string"},
+        "used_order_ids": {"type": "array", "items": {"type": "string"}},
+    },
+}
+
 SYSTEM_PROMPT = """\
 You answer one question from a rail slot planning operator about a plan that has
 already been computed.
@@ -105,7 +118,9 @@ def answer_question(
         "used_order_ids": [
             order_id
             for order_id in (generated.get("used_order_ids") or [])
-            if order_id in allowed_ids
+            # `isinstance` before the membership test, not after: an unhashable
+            # entry raises on `in` rather than simply failing it.
+            if isinstance(order_id, str) and order_id in allowed_ids
         ],
     }
 
@@ -219,7 +234,13 @@ def _generate(
         f"Verified result:\n{json.dumps(_facts(run, snapshot, outcomes), ensure_ascii=False)}"
     )
 
-    response = client.complete_json(SYSTEM_PROMPT, user_prompt, max_tokens=900)
+    response = client.complete_json(
+        SYSTEM_PROMPT,
+        user_prompt,
+        schema=ANSWER_SCHEMA,
+        schema_name="run_answer",
+        max_tokens=900,
+    )
     if not response:
         return None
 

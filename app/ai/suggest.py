@@ -62,6 +62,30 @@ PAIRED_TEXT = (
     "터미널 변경과 운행 추가를 함께 시도해야 합니다."
 )
 
+# Enforced by the API for the same reason the explanation cards are: a prompt
+# describing the shape is not the same as the shape being guaranteed, and the
+# loop below reads `item.get(...)` on every entry.
+SUGGESTIONS_SCHEMA: dict = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["suggestions"],
+    "properties": {
+        "suggestions": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["order_id", "adjustment_types", "reason"],
+                "properties": {
+                    "order_id": {"type": "string"},
+                    "adjustment_types": {"type": "array", "items": {"type": "string"}},
+                    "reason": {"type": "string"},
+                },
+            },
+        }
+    },
+}
+
 SYSTEM_PROMPT = """\
 You advise a rail slot planning operator on which approved change to try first
 for an order the baseline plan could not carry.
@@ -319,10 +343,14 @@ def _generate(candidates: dict[str, dict[str, Any]]) -> list[dict] | None:
     response = client.complete_json(
         SYSTEM_PROMPT,
         user_prompt,
+        schema=SUGGESTIONS_SCHEMA,
+        schema_name="adjustment_suggestions",
         max_tokens=max(600, 200 * len(payload)),
     )
     if not response:
         return None
 
     suggestions = response.get("suggestions")
-    return suggestions if isinstance(suggestions, list) else None
+    if not isinstance(suggestions, list):
+        return None
+    return [item for item in suggestions if isinstance(item, dict)]

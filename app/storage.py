@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import logging
 import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any, Protocol
 
@@ -38,6 +40,35 @@ _SIBLING_PREFIXES: dict[str, tuple[str, ...]] = {
 
 class ScenarioRecord(dict):
     """Stored scenario row. A plain dict keeps both backends symmetric."""
+
+
+_warned_about_explanation_column = False
+
+
+@contextmanager
+def _tolerating_missing_explanation_column() -> Iterator[None]:
+    """Let a not-yet-migrated database lose the cache instead of the screen.
+
+    `runs.explanation` arrives in 0002. Code reaches a deployment before a
+    migration does, and without this the gap is not a slower dashboard but a
+    broken one: reading and writing the column both raise, and the endpoint the
+    dashboard always calls answers 500.
+
+    Swallowed to a warning, once, because the fallback is exactly the behaviour
+    this column replaced -- generate on every read. Slower and untidy, and the
+    plan still draws.
+    """
+    global _warned_about_explanation_column
+    try:
+        yield
+    except Exception as exc:  # noqa: BLE001 - any driver error means no column
+        if not _warned_about_explanation_column:
+            logger.warning(
+                "runs.explanation is unavailable (%s); explanations will be rebuilt on "
+                "every read until migration 0002 is applied",
+                exc,
+            )
+            _warned_about_explanation_column = True
 
 
 class Store(Protocol):
@@ -380,18 +411,22 @@ class SupabaseStore:
         return sorted(row["run_id"] for row in (response.data or []))
 
     def save_explanation(self, run_id: str, result: dict[str, Any]) -> None:
-        self._client.table(RUNS_TABLE).update({"explanation": result}).eq(
-            "run_id", run_id
-        ).execute()
+        with _tolerating_missing_explanation_column():
+            self._client.table(RUNS_TABLE).update({"explanation": result}).eq(
+                "run_id", run_id
+            ).execute()
 
     def get_explanation(self, run_id: str) -> dict[str, Any] | None:
-        row = self._one(RUNS_TABLE, "run_id", run_id, "explanation")
-        return row.get("explanation") if row else None
+        with _tolerating_missing_explanation_column():
+            row = self._one(RUNS_TABLE, "run_id", run_id, "explanation")
+            return row.get("explanation") if row else None
+        return None
 
     def clear_explanation(self, run_id: str) -> None:
-        self._client.table(RUNS_TABLE).update({"explanation": None}).eq(
-            "run_id", run_id
-        ).execute()
+        with _tolerating_missing_explanation_column():
+            self._client.table(RUNS_TABLE).update({"explanation": None}).eq(
+                "run_id", run_id
+            ).execute()
 
     def update_order_outcome(
         self, run_id: str, order_id: str, outcome: dict[str, Any]
