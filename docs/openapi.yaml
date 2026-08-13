@@ -149,6 +149,21 @@ paths:
         content: {application/json: {schema: {$ref: '#/components/schemas/IntakeRequest'}}}
       responses:
         '200': {description: Structured draft, content: {application/json: {schema: {$ref: '#/components/schemas/IntakeResult'}}}}
+  /v1/intake/order-batches:
+    post:
+      operationId: structureIntakeBatch
+      summary: Structure one document that asks for several orders (P4a)
+      description: >-
+        A request for five trailers arrives as one message, not five. The
+        single-order endpoint keeps whichever order the model read first and
+        drops the rest without saying so. Each entry then goes through the same
+        sanitising and missing-field reporting as a single draft. Without a
+        model key there is no split to make, so one draft comes back.
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/IntakeRequest'}}}
+      responses:
+        '200': {description: Structured drafts, content: {application/json: {schema: {$ref: '#/components/schemas/IntakeBatchResult'}}}}
         '400': {$ref: '#/components/responses/InvalidInput'}
   /v1/runs/{run_id}/explanation:
     get:
@@ -161,6 +176,23 @@ paths:
       parameters: [{$ref: '#/components/parameters/RunId'}]
       responses:
         '200': {description: Explanation cards, content: {application/json: {schema: {$ref: '#/components/schemas/ExplanationResult'}}}}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /v1/runs/{run_id}/questions:
+    post:
+      operationId: askRunQuestion
+      summary: Answer one question about a solved run (P4d)
+      description: >-
+        Answered from the run's own verified facts, or refused. Unlike an
+        explanation card there is no template to fall back to, and a plausible
+        wrong answer to "왜 밀렸나요?" cannot be told from a right one, so an
+        answer naming anything the run does not contain is withheld and the
+        guard's verdict is returned in refused_reason.
+      parameters: [{$ref: '#/components/parameters/RunId'}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/QuestionRequest'}}}
+      responses:
+        '200': {description: Answer or refusal, content: {application/json: {schema: {$ref: '#/components/schemas/QuestionResult'}}}}
         '404': {$ref: '#/components/responses/NotFound'}
   /v1/ai/status:
     get:
@@ -663,6 +695,35 @@ components:
             - type: 'null'
         compatibility_tags: {anyOf: [{$ref: '#/components/schemas/CompatibilityTags'}, {type: 'null'}]}
         priority_class: {anyOf: [{type: string, enum: [P1, P2, P3]}, {type: 'null'}]}
+    IntakeBatchResult:
+      type: object
+      required: [orders, source, truncated]
+      properties:
+        orders: {type: array, items: {$ref: '#/components/schemas/IntakeResult'}}
+        source: {type: string, enum: [LLM, RULE_BASED]}
+        truncated:
+          type: boolean
+          description: True when the document named more orders than the page returns.
+    QuestionRequest:
+      type: object
+      required: [question]
+      properties:
+        question: {type: string, minLength: 1, maxLength: 500}
+    QuestionResult:
+      type: object
+      required: [answer, source, grounded, used_order_ids]
+      properties:
+        answer:
+          type: string
+          description: Empty when the answer was refused.
+        source: {type: string, enum: [LLM, UNAVAILABLE]}
+        grounded:
+          type: boolean
+          description: False when the layer is unconfigured or the guard withheld the answer.
+        refused_reason:
+          type: [string, 'null']
+          description: Which guard fired, so a withheld answer is never silent.
+        used_order_ids: {type: array, items: {type: string}}
     IntakeResult:
       type: object
       required: [order_draft, missing_fields, review_reasons, field_evidence, assumptions_flagged, input_state, reason_codes, source, assumption_note]
@@ -711,12 +772,24 @@ components:
         detail: {type: string}
         display_label: {type: string}
         display_badges: {type: array, items: {type: string}}
+        suggested_adjustment_types:
+          type: array
+          items: {type: string}
+          description: >-
+            The exact set of approved changes to apply together, usually one.
+            Present only on an order the plan left out that still has an
+            approval window. A proposal, not an answer -- the alternative search
+            decides, and often refuses.
+        suggestion:
+          type: string
+          description: One sentence on why that change addresses this order's block.
     ExplanationResult:
       type: object
       required: [cards, source, replaced_order_ids, replaced_reasons]
       properties:
         cards: {type: array, items: {$ref: '#/components/schemas/ExplanationCard'}}
         source: {type: string, enum: [LLM, TEMPLATE]}
+        suggestion_source: {type: string, enum: [LLM, TEMPLATE]}
         replaced_order_ids: {type: array, items: {type: string}}
         replaced_reasons:
           type: object
