@@ -43,6 +43,25 @@ class Scenario(BaseModel):
     created_at: datetime
 
 
+class ScenarioDetail(Scenario):
+    """A stored scenario together with the snapshot it was created from.
+
+    `POST /v1/scenarios` answers with the id and state only, and until a run
+    exists the snapshot is readable nowhere else -- `GET /v1/runs/{id}/export`
+    carries it but needs a solved, validated run. The screens that draw the
+    inputs come before any of that, so they need this.
+    """
+
+    scenario_name: str
+    as_of: datetime
+    baseline_service_ids: list[str]
+    policy_version: str
+    assumption_ids: list[str] = Field(default_factory=list)
+    # Verbatim, for the same reason as ExportBundle.input_snapshot: this is the
+    # document `input_snapshot_sha256` was taken over.
+    input_snapshot: dict
+
+
 class ErrorResponse(BaseModel):
     """Every failure response carries code, message, details and trace_id (04 §1)."""
 

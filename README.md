@@ -63,6 +63,7 @@ python scripts/smoke.py
 | 메서드·경로 | 응답 |
 | --- | --- |
 | `POST /v1/scenarios` | `201` + `scenario_id`, `state=VALIDATION_REQUIRED` |
+| `GET /v1/scenarios/{id}` | 저장된 시나리오 + 제출된 그대로의 `input_snapshot` |
 | `POST /v1/scenarios/{id}/validate` | 주문별 `input_state`·`eligibility_state`·사유·후보 슬롯 |
 | `POST /v1/scenarios/{id}/runs` | `201` + 배정, 주문 결과, 재현성 해시 |
 | `GET /v1/runs/{id}` | 저장된 실행 결과 |

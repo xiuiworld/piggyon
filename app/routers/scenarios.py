@@ -11,6 +11,7 @@ from app.models.api import (
     RunRequest,
     Scenario,
     ScenarioCreateRequest,
+    ScenarioDetail,
     ValidationResult,
 )
 from app.services.planning import build_validation_result, run_baseline, snapshot_of
@@ -62,6 +63,19 @@ async def create_scenario(
     return Scenario(
         scenario_id=scenario_id, state="VALIDATION_REQUIRED", created_at=created_at
     )
+
+
+@router.get(
+    "/{scenario_id}",
+    response_model=ScenarioDetail,
+    summary="Read a stored scenario and its input snapshot",
+    responses={404: {"model": ErrorResponse, "description": "Scenario not found"}},
+)
+def get_scenario(
+    scenario_id: str,
+    store: Store = Depends(get_store),
+) -> ScenarioDetail:
+    return ScenarioDetail.model_validate(_require_scenario(store, scenario_id))
 
 
 @router.post(

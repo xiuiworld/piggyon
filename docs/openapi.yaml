@@ -20,6 +20,18 @@ paths:
       responses:
         '201': {description: Created, content: {application/json: {schema: {$ref: '#/components/schemas/Scenario'}}}}
         '400': {$ref: '#/components/responses/InvalidInput'}
+  /v1/scenarios/{scenario_id}:
+    get:
+      operationId: getScenario
+      summary: Read a stored scenario and its input snapshot
+      description: >-
+        createScenario answers with the id and state only. Until a run exists
+        the snapshot is readable nowhere else, and the screens that draw the
+        inputs come before any run.
+      parameters: [{$ref: '#/components/parameters/ScenarioId'}]
+      responses:
+        '200': {description: Stored scenario, content: {application/json: {schema: {$ref: '#/components/schemas/ScenarioDetail'}}}}
+        '404': {$ref: '#/components/responses/NotFound'}
   /v1/scenarios/{scenario_id}/validate:
     post:
       operationId: validateScenario
@@ -164,6 +176,19 @@ components:
         scenario_id: {type: string}
         state: {type: string, enum: [VALIDATION_REQUIRED, READY_TO_SOLVE, SOLVED]}
         created_at: {type: string, format: date-time}
+    ScenarioDetail:
+      description: A stored scenario together with the snapshot it was created from.
+      allOf:
+        - $ref: '#/components/schemas/Scenario'
+        - type: object
+          required: [scenario_name, as_of, baseline_service_ids, policy_version, assumption_ids, input_snapshot]
+          properties:
+            scenario_name: {type: string}
+            as_of: {type: string, format: date-time}
+            baseline_service_ids: {type: array, minItems: 1, items: {type: string}}
+            policy_version: {type: string}
+            assumption_ids: {type: array, items: {type: string}}
+            input_snapshot: {$ref: '#/components/schemas/ScenarioInputSnapshot'}
     ScenarioInputSnapshot:
       type: object
       required: [schema_version, scenario_id, scenario_type, as_of, timezone, baseline_service_ids, assumptions, shippers, terminals, route_constraints, services, wagons, slots, orders, policy]
