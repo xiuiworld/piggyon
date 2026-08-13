@@ -101,11 +101,14 @@ def build_cards(run: dict[str, Any]) -> dict[str, Any]:
     cards: dict[str, dict[str, Any]] = {}
     replaced: list[str] = []
 
+    rejections: dict[str, str] = {}
+
     for card in generated:
         order_id = card.get("order_id")
         if order_id not in allowed_ids or order_id in cards:
             continue
-        if _is_grounded(card, order_id, allowed_ids, allowed_codes, entity_ids):
+        reason = _rejection_reason(card, order_id, allowed_ids, allowed_codes, entity_ids)
+        if reason is None:
             cards[order_id] = {
                 "order_id": order_id,
                 "headline": str(card.get("headline", ""))[:40],
@@ -117,17 +120,21 @@ def build_cards(run: dict[str, Any]) -> dict[str, Any]:
             }
         else:
             replaced.append(order_id)
+            rejections[order_id] = reason
 
     for order_id, template in templates.items():
         if order_id not in cards:
             cards[order_id] = template
             if order_id not in replaced:
                 replaced.append(order_id)
+                rejections.setdefault(order_id, "NO_CARD_RETURNED")
 
     return {
         "cards": [cards[o["order_id"]] for o in outcomes],
         "source": "LLM" if len(replaced) < len(outcomes) else "TEMPLATE",
         "replaced_order_ids": sorted(replaced),
+        # Which guard fired, so a swap to the template is never silent.
+        "replaced_reasons": rejections,
     }
 
 
@@ -184,6 +191,56 @@ def _generate(run: dict[str, Any], outcomes: list[dict]) -> list[dict] | None:
     return cards if isinstance(cards, list) else None
 
 
+def _rejection_reason(
+    card: dict[str, Any],
+    order_id: str,
+    allowed_ids: set[str],
+    allowed_codes: set[str],
+    entity_ids: set[str] | None = None,
+) -> str | None:
+    """Why this card cannot be served, or None when nothing was invented.
+
+    Returning the reason rather than a bare bool is what makes the guard
+    debuggable: a silent swap to the template looks identical whether the
+    model hallucinated or the guard is simply too strict.
+    """
+    text = f"{card.get('headline', '')} {card.get('detail', '')}"
+    entity_ids = entity_ids if entity_ids is not None else allowed_ids
+
+    if not text.strip():
+        return "EMPTY_TEXT"
+
+    for pattern in FORBIDDEN_PATTERNS:
+        if pattern.search(text):
+            return f"FORBIDDEN_CLAIM:{pattern.pattern}"
+
+    # Any order it names must exist, and must be the one it is about.
+    for mentioned in ORDER_ID.findall(text):
+        if mentioned not in allowed_ids:
+            return f"UNKNOWN_ORDER:{mentioned}"
+        if mentioned != order_id:
+            return f"FOREIGN_ORDER:{mentioned}"
+
+    # Any entity it names must appear in this run.
+    for mentioned in ENTITY_ID.findall(text):
+        if mentioned.startswith("ORD-"):
+            continue  # already checked, and against a stricter rule
+        if mentioned not in entity_ids:
+            return f"UNKNOWN_ENTITY:{mentioned}"
+
+    # Any remaining SHOUTY token must be a reason code from this run or a value
+    # fixed by the schema.
+    entities = ENTITY_ID.findall(text)
+    for token in SHOUTY_TOKEN.findall(text):
+        if token in allowed_codes or token in SCHEMA_VOCABULARY:
+            continue
+        if any(token in mentioned for mentioned in entities):
+            continue
+        return f"UNKNOWN_TOKEN:{token}"
+
+    return None
+
+
 def _is_grounded(
     card: dict[str, Any],
     order_id: str,
@@ -191,42 +248,9 @@ def _is_grounded(
     allowed_codes: set[str],
     entity_ids: set[str] | None = None,
 ) -> bool:
-    """True when nothing in the card was invented.
-
-    `entity_ids` is every id the run actually contains. Skipping ids by their
-    prefix instead would wave through a fabricated slot like SLT-AM-99, which
-    is precisely the failure this guard exists to catch.
-    """
-    text = f"{card.get('headline', '')} {card.get('detail', '')}"
-    entity_ids = entity_ids if entity_ids is not None else allowed_ids
-
-    if not text.strip():
-        return False
-    if any(pattern.search(text) for pattern in FORBIDDEN_PATTERNS):
-        return False
-
-    # Any order it names must exist, and must be the one it is about.
-    for mentioned in ORDER_ID.findall(text):
-        if mentioned not in allowed_ids or mentioned != order_id:
-            return False
-
-    # Any entity it names must appear in this run.
-    for mentioned in ENTITY_ID.findall(text):
-        if mentioned.startswith("ORD-"):
-            continue  # already checked, and against a stricter rule
-        if mentioned not in entity_ids:
-            return False
-
-    # Any remaining SHOUTY token must be a reason code from this run or a value
-    # fixed by the schema.
-    for token in SHOUTY_TOKEN.findall(text):
-        if token in allowed_codes or token in SCHEMA_VOCABULARY:
-            continue
-        if any(token in mentioned for mentioned in ENTITY_ID.findall(text)):
-            continue
-        return False
-
-    return True
+    return (
+        _rejection_reason(card, order_id, allowed_ids, allowed_codes, entity_ids) is None
+    )
 
 
 def _template_card(outcome: dict[str, Any]) -> dict[str, Any]:
