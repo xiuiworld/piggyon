@@ -8,6 +8,7 @@ decides the outcome; pinning keeps every stage's precedence exact.
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 
 from ortools.sat.python import cp_model
@@ -20,6 +21,9 @@ from app.rules.eligibility import Candidate, ScenarioEvaluation
 ASSIGNED = "ASSIGNED"
 UNASSIGNED = "UNASSIGNED"
 NOT_APPLICABLE = "NOT_APPLICABLE"
+
+# CP-SAT needs a non-zero window to answer at all; below this a stage is skipped.
+_MIN_STAGE_SECONDS = 0.05
 
 
 @dataclass(frozen=True)
@@ -144,15 +148,27 @@ def solve_baseline(
         )
 
     solver = _build_solver(parameters)
+    budget = _Budget(parameters.max_time_seconds)
     stages_optimal = True
     objective_values: dict[str, int] = {}
+    # The best complete solution proved so far, kept because a later stage that
+    # runs out of time must fall back to it rather than to nothing.
+    best: dict[tuple[str, str], int] | None = None
+
+    def snapshot_solution() -> dict[tuple[str, str], int]:
+        return {key: solver.Value(var) for key, var in x.items()}
 
     # 1. Assign as many orders as possible.
     assigned_count = sum(x.values())
-    status, optimal = _optimise(solver, model, assigned_count, maximise=True)
+    status, optimal = _optimise(solver, model, assigned_count, budget, maximise=True)
     if status == cp_model.INFEASIBLE:
         return _infeasible(evaluation)
+    if not _usable(status):
+        # Nothing was proved at all, so there is no plan to report. Saying
+        # "zero assignments" here would be a fabricated answer.
+        return _errored(evaluation)
     stages_optimal &= optimal
+    best = snapshot_solution()
     value = int(round(solver.ObjectiveValue()))
     objective_values["assigned_count"] = value
     model.Add(assigned_count == value)
@@ -163,27 +179,11 @@ def solve_baseline(
         var * getattr(scores, orders[order_id].priority_class)
         for (order_id, _), var in x.items()
     )
-    status, optimal = _optimise(solver, model, priority_score, maximise=True)
-    if status == cp_model.INFEASIBLE:
-        return _infeasible(evaluation)
-    stages_optimal &= optimal
-    value = int(round(solver.ObjectiveValue()))
-    objective_values["priority_score"] = value
-    model.Add(priority_score == value)
-
     # 3. Prefer the tighter due times.
     due_cost = sum(
         var * _seconds_from(snapshot, orders[order_id].due_at)
         for (order_id, _), var in x.items()
     )
-    status, optimal = _optimise(solver, model, due_cost, maximise=False)
-    if status == cp_model.INFEASIBLE:
-        return _infeasible(evaluation)
-    stages_optimal &= optimal
-    value = int(round(solver.ObjectiveValue()))
-    objective_values["due_cost"] = value
-    model.Add(due_cost == value)
-
     # 4. Canonical order/slot tie-break, applied one order at a time so the
     #    result is the lexicographically smallest assignment rather than
     #    whichever equal-cost solution the search happened to reach first.
@@ -191,21 +191,43 @@ def solve_baseline(
         slot_id: rank for rank, slot_id in enumerate(sorted(by_slot), start=1)
     }
     unassigned_penalty = len(slot_rank) + 1
-    for order_id in sorted(by_order):
+
+    def canonical_cost(order_id: str):
         group = by_order[order_id]
-        vars_for_order = [x[(order_id, c.slot_id)] for c in group]
-        cost = sum(
-            x[(order_id, c.slot_id)] * slot_rank[c.slot_id] for c in group
-        ) + unassigned_penalty * (1 - sum(vars_for_order))
-        status, optimal = _optimise(solver, model, cost, maximise=False)
+        assigned = sum(x[(order_id, c.slot_id)] for c in group)
+        ranked = sum(x[(order_id, c.slot_id)] * slot_rank[c.slot_id] for c in group)
+        return ranked + unassigned_penalty * (1 - assigned)
+
+    refinements: list[tuple[str | None, object, bool]] = [
+        ("priority_score", priority_score, True),
+        ("due_cost", due_cost, False),
+    ] + [(None, canonical_cost(order_id), False) for order_id in sorted(by_order)]
+
+    for name, expression, maximise in refinements:
+        if budget.exhausted():
+            # Out of time. The plan already proved is still valid, just not
+            # refined all the way, so report it as FEASIBLE rather than
+            # discarding it or claiming optimality.
+            stages_optimal = False
+            break
+
+        status, optimal = _optimise(solver, model, expression, budget, maximise=maximise)
         if status == cp_model.INFEASIBLE:
             return _infeasible(evaluation)
+        if not _usable(status):
+            stages_optimal = False
+            break
+
         stages_optimal &= optimal
-        model.Add(cost == int(round(solver.ObjectiveValue())))
+        best = snapshot_solution()
+        value = int(round(solver.ObjectiveValue()))
+        if name:
+            objective_values[name] = value
+        model.Add(expression == value)
 
     assignment_by_order: dict[str, Candidate] = {}
     for c in candidates:
-        if solver.Value(x[(c.order_id, c.slot_id)]):
+        if best[(c.order_id, c.slot_id)]:
             assignment_by_order[c.order_id] = c
 
     assignments = [
@@ -236,14 +258,33 @@ def _build_solver(parameters: SolverParameters) -> cp_model.CpSolver:
     solver = cp_model.CpSolver()
     solver.parameters.random_seed = parameters.random_seed
     solver.parameters.num_search_workers = parameters.num_search_workers
-    solver.parameters.max_time_in_seconds = float(parameters.max_time_seconds)
     return solver
+
+
+class _Budget:
+    """One wall-clock budget shared by every stage.
+
+    The lexicographic solve runs 3 fixed stages plus one per order, so setting
+    `max_time_seconds` on the solver would let a request that asked for 10s
+    take 10s *per stage*. The caller asked for a bound on the request.
+    """
+
+    def __init__(self, total_seconds: int) -> None:
+        self._deadline = time.monotonic() + total_seconds
+
+    def remaining(self) -> float:
+        return self._deadline - time.monotonic()
+
+    def exhausted(self) -> bool:
+        # Below this there is no point starting another solve.
+        return self.remaining() <= _MIN_STAGE_SECONDS
 
 
 def _optimise(
     solver: cp_model.CpSolver,
     model: cp_model.CpModel,
     expression,
+    budget: _Budget,
     *,
     maximise: bool,
 ) -> tuple[int, bool]:
@@ -251,12 +292,35 @@ def _optimise(
         model.Maximize(expression)
     else:
         model.Minimize(expression)
+    solver.parameters.max_time_in_seconds = max(_MIN_STAGE_SECONDS, budget.remaining())
     status = solver.Solve(model)
     return status, status == cp_model.OPTIMAL
 
 
+def _usable(status: int) -> bool:
+    """Whether this status came with a solution worth reading.
+
+    UNKNOWN is the trap: it is not INFEASIBLE, but `ObjectiveValue()` still
+    answers (-0.0), so treating "not infeasible" as "solved" pins a fabricated
+    objective. A timed-out solve would be recorded as a plan assigning nothing.
+    """
+    return status in (cp_model.OPTIMAL, cp_model.FEASIBLE)
+
+
 def _seconds_from(snapshot: ScenarioInputSnapshot, moment) -> int:
     return int((moment - snapshot.as_of).total_seconds())
+
+
+def _errored(evaluation: ScenarioEvaluation) -> SolveResult:
+    """No solution was proved, so there is no plan to report."""
+    return SolveResult(
+        solver_status="ERROR",
+        run_state="ERROR",
+        is_optimal=False,
+        assignments=[],
+        order_outcomes=_build_outcomes(evaluation, {}),
+        objective_values={},
+    )
 
 
 def _infeasible(evaluation: ScenarioEvaluation) -> SolveResult:
