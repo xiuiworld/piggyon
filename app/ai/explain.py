@@ -36,8 +36,33 @@ FORBIDDEN_PATTERNS = [
     re.compile(r"실제\s*운행이?\s*가능"),
 ]
 
-ORDER_ID = re.compile(r"\bORD-\d{3,}\b")
-REASON_CODE = re.compile(r"\b[A-Z][A-Z_]{4,}\b")
+ORDER_ID = re.compile(r"ORD-\d{3,}")
+# Any SHOUTY token, plus any entity id. Both must resolve to something the run
+# actually contains before the card is served.
+SHOUTY_TOKEN = re.compile(r"\b[A-Z][A-Z_]{4,}\b")
+ENTITY_ID = re.compile(r"\b(?:ORD|SLT|SVC|WGN|TRM|SHP|RTC)-[A-Z0-9-]+")
+
+# Enum values are schema, not claims: they are fixed by the contract, so a card
+# naming one has not invented anything. Without this the guard rejects a card
+# for saying TRAILER_TALL, which is exactly why ORD-008 needs explaining.
+SCHEMA_VOCABULARY = frozenset(
+    {
+        "TRAILER_STANDARD",
+        "TRAILER_TALL",
+        "VALID",
+        "REVIEW_REQUIRED",
+        "ELIGIBLE",
+        "INELIGIBLE",
+        "NOT_EVALUATED",
+        "ASSIGNED",
+        "UNASSIGNED",
+        "NOT_APPLICABLE",
+        "AVAILABLE",
+        "NONE",
+        "NOT_SEARCHED",
+        "DEMO_ASSUMPTION",
+    }
+)
 
 SYSTEM_PROMPT = """\
 You write short Korean status cards for a rail slot planning operator.
@@ -72,6 +97,7 @@ def build_cards(run: dict[str, Any]) -> dict[str, Any]:
 
     allowed_ids = {o["order_id"] for o in outcomes}
     allowed_codes = {o["primary_reason_code"] for o in outcomes}
+    entity_ids = _entity_ids(run, outcomes)
     cards: dict[str, dict[str, Any]] = {}
     replaced: list[str] = []
 
@@ -79,7 +105,7 @@ def build_cards(run: dict[str, Any]) -> dict[str, Any]:
         order_id = card.get("order_id")
         if order_id not in allowed_ids or order_id in cards:
             continue
-        if _is_grounded(card, order_id, allowed_ids, allowed_codes):
+        if _is_grounded(card, order_id, allowed_ids, allowed_codes, entity_ids):
             cards[order_id] = {
                 "order_id": order_id,
                 "headline": str(card.get("headline", ""))[:40],
@@ -103,6 +129,24 @@ def build_cards(run: dict[str, Any]) -> dict[str, Any]:
         "source": "LLM" if len(replaced) < len(outcomes) else "TEMPLATE",
         "replaced_order_ids": sorted(replaced),
     }
+
+
+def _entity_ids(run: dict[str, Any], outcomes: list[dict]) -> set[str]:
+    """Every id this run genuinely contains."""
+    ids = {o["order_id"] for o in outcomes}
+    for assignment in run.get("assignments", []):
+        ids.update(
+            {
+                assignment["order_id"],
+                assignment["service_id"],
+                assignment["wagon_id"],
+                assignment["slot_id"],
+            }
+        )
+    for outcome in outcomes:
+        evidence = outcome.get("evidence") or {}
+        ids.update(evidence.get("eligible_slot_ids") or [])
+    return ids
 
 
 def _generate(run: dict[str, Any], outcomes: list[dict]) -> list[dict] | None:
@@ -145,23 +189,43 @@ def _is_grounded(
     order_id: str,
     allowed_ids: set[str],
     allowed_codes: set[str],
+    entity_ids: set[str] | None = None,
 ) -> bool:
+    """True when nothing in the card was invented.
+
+    `entity_ids` is every id the run actually contains. Skipping ids by their
+    prefix instead would wave through a fabricated slot like SLT-AM-99, which
+    is precisely the failure this guard exists to catch.
+    """
     text = f"{card.get('headline', '')} {card.get('detail', '')}"
+    entity_ids = entity_ids if entity_ids is not None else allowed_ids
 
     if not text.strip():
         return False
     if any(pattern.search(text) for pattern in FORBIDDEN_PATTERNS):
         return False
+
     # Any order it names must exist, and must be the one it is about.
     for mentioned in ORDER_ID.findall(text):
         if mentioned not in allowed_ids or mentioned != order_id:
             return False
-    # Any reason-code-looking token must be a real code from this run.
-    for token in REASON_CODE.findall(text):
-        if token.startswith(("ORD", "SLT", "SVC", "WGN", "TRM")):
-            continue
-        if token not in allowed_codes:
+
+    # Any entity it names must appear in this run.
+    for mentioned in ENTITY_ID.findall(text):
+        if mentioned.startswith("ORD-"):
+            continue  # already checked, and against a stricter rule
+        if mentioned not in entity_ids:
             return False
+
+    # Any remaining SHOUTY token must be a reason code from this run or a value
+    # fixed by the schema.
+    for token in SHOUTY_TOKEN.findall(text):
+        if token in allowed_codes or token in SCHEMA_VOCABULARY:
+            continue
+        if any(token in mentioned for mentioned in ENTITY_ID.findall(text)):
+            continue
+        return False
+
     return True
 
 
