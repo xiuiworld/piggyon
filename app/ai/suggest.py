@@ -312,17 +312,22 @@ def build_suggestions(run: dict[str, Any], snapshot: dict[str, Any]) -> dict[str
             replaced.append(order_id)
             continue
 
+        # Where the two changes have to travel together, the whole proposal
+        # stays computed -- both the sentence and the set it describes.
+        #
+        # Overriding only the sentence let them contradict each other: the text
+        # said terminal *and* service while `chosen` could be the terminal
+        # alone, so the screen ticked one box under a sentence demanding two,
+        # and pressing it returned NO_FEASIBLE_ALTERNATIVE every time. That is
+        # the precise outcome the pairing rule exists to prevent.
+        if candidate["terminal_change_needs_a_service"]:
+            suggestions[order_id] = dict(templates[order_id])
+            continue
+
         suggestions[order_id] = {
             "order_id": order_id,
             "adjustment_types": chosen,
-            # The pairing sentence stays computed, like the display label and
-            # the badge. It states a fact read off the snapshot -- nothing runs
-            # to the approved destination -- and a model asked to rephrase it
-            # returns something vaguer that drops the reason both changes have
-            # to travel together, which is the only thing worth saying there.
-            "reason": templates[order_id]["reason"]
-            if candidate["terminal_change_needs_a_service"]
-            else reason,
+            "reason": reason,
         }
 
     served_by_model = len(candidates) - len(replaced)
