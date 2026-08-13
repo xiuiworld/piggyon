@@ -8,18 +8,43 @@
 
 ## 배포
 
-- API: <https://piggyon-api.onrender.com>
-- 문서: <https://piggyon-api.onrender.com/docs>
-- 헬스체크: <https://piggyon-api.onrender.com/health>
+- API: <https://piggyon-api.fly.dev>
+- 문서: <https://piggyon-api.fly.dev/docs>
+- 헬스체크: <https://piggyon-api.fly.dev/health>
 
-저장소는 Supabase(`ap-northeast-2`), 배포는 Render 블루프린트다. 무료 인스턴스는
-유휴 시 슬립에 들어가므로 첫 요청이 느릴 수 있다.
+저장소는 Supabase(`ap-northeast-2`), 배포는 Fly.io `nrt`(도쿄)다. Fly 에 서울
+리전은 없어서 한국 최근접이 도쿄다. 데모 기간에는 머신 1개를 상시 가동해
+콜드스타트를 없앤다(`auto_stop_machines = "off"`). Render 무료 티어에서 옮겨온
+이유와 측정치는 [docs/11-deployment.md](docs/11-deployment.md)에 적었다.
 
 배포본 검증:
 
 ```bash
-python scripts/smoke.py https://piggyon-api.onrender.com
+python scripts/smoke.py https://piggyon-api.fly.dev
 ```
+
+### 배포 절차
+
+flyctl 설치 후 한 번만:
+
+```bash
+fly launch --no-deploy --copy-config --name piggyon-api --region nrt
+```
+
+시크릿은 `fly.toml`이 아니라 secrets 로 넣는다(`fly.toml`은 git 에 올라간다):
+
+```bash
+fly secrets set SUPABASE_URL=... SUPABASE_KEY=... OPENAI_API_KEY=...
+```
+
+이후 배포는:
+
+```bash
+fly deploy --ha=false
+```
+
+`--ha=false` 가 중요하다. 빼면 Fly 가 머신을 2개 띄우는데, 상시 가동 설정이라
+비용이 그대로 2배가 된다. 데모에는 1개면 충분하다.
 
 ## 실행
 

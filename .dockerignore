@@ -1,0 +1,21 @@
+# 런타임에 안 쓰는 것들. 빌드 컨텍스트가 작아야 배포가 빠르다.
+.git
+.github
+.claude
+.venv
+venv
+__pycache__
+*.py[cod]
+.pytest_cache
+.coverage
+tests
+fixtures
+scripts
+docs
+supabase
+README.md
+render.yaml
+
+# 시크릿은 `fly secrets set` 으로만 들어간다. 이미지에 절대 굽지 않는다.
+.env
+.env.*
