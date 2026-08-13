@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Request, Response, status
+from fastapi import APIRouter, Depends, Query, Request, Response, status
 
 from app.errors import ApiError
 from app.models.api import (
@@ -12,6 +12,7 @@ from app.models.api import (
     Scenario,
     ScenarioCreateRequest,
     ScenarioDetail,
+    ScenarioSummary,
     ValidationResult,
 )
 from app.services.planning import build_validation_result, run_baseline, snapshot_of
@@ -63,6 +64,38 @@ async def create_scenario(
     return Scenario(
         scenario_id=scenario_id, state="VALIDATION_REQUIRED", created_at=created_at
     )
+
+
+@router.get(
+    "",
+    response_model=list[ScenarioSummary],
+    summary="List stored scenarios, newest first",
+)
+def list_scenarios(
+    limit: int = Query(20, ge=1, le=100),
+    store: Store = Depends(get_store),
+) -> list[ScenarioSummary]:
+    """Every scenario this store holds, newest first.
+
+    Without it a scenario is only reachable by an id the caller happened to keep
+    from the response that created it: close the tab and the work is gone, even
+    though the record is still there. The demo could only ever start over.
+    """
+    return [
+        ScenarioSummary(
+            scenario_id=record["scenario_id"],
+            # Older records predate the field; the id is a worse name than a
+            # name but a better one than nothing.
+            scenario_name=record.get("scenario_name") or record["scenario_id"],
+            state=record["state"],
+            created_at=record["created_at"],
+            parent_scenario_id=record.get("parent_scenario_id"),
+            change_set=record.get("change_set") or [],
+            order_count=len((record.get("input_snapshot") or {}).get("orders") or []),
+            latest_run_id=store.latest_run_id(record["scenario_id"]),
+        )
+        for record in store.list_scenarios(limit)
+    ]
 
 
 @router.get(

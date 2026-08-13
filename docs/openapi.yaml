@@ -20,6 +20,24 @@ paths:
       responses:
         '201': {description: Created, content: {application/json: {schema: {$ref: '#/components/schemas/Scenario'}}}}
         '400': {$ref: '#/components/responses/InvalidInput'}
+    get:
+      operationId: listScenarios
+      summary: List stored scenarios, newest first
+      description: >-
+        Without this a scenario is reachable only by an id the caller kept from
+        the response that created it, so closing the tab loses work the store
+        still holds. The snapshot is omitted; only order_count survives from it.
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: {type: integer, minimum: 1, maximum: 100, default: 20}
+      responses:
+        '200':
+          description: Stored scenarios
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: '#/components/schemas/ScenarioSummary'}}
   /v1/scenarios/{scenario_id}:
     get:
       operationId: getScenario
@@ -183,7 +201,7 @@ components:
       allOf:
         - $ref: '#/components/schemas/Scenario'
         - type: object
-          required: [scenario_name, as_of, baseline_service_ids, policy_version, assumption_ids, input_snapshot]
+          required: [scenario_name, as_of, baseline_service_ids, policy_version, assumption_ids, input_snapshot, change_set]
           properties:
             scenario_name: {type: string}
             as_of: {type: string, format: date-time}
@@ -191,6 +209,29 @@ components:
             policy_version: {type: string}
             assumption_ids: {type: array, items: {type: string}}
             input_snapshot: {$ref: '#/components/schemas/ScenarioInputSnapshot'}
+            parent_scenario_id:
+              type: [string, 'null']
+              description: The scenario this one was derived from. Null when created directly.
+            change_set:
+              type: array
+              description: What the derivation changed. Empty on a scenario created directly.
+              items: {$ref: '#/components/schemas/ChangeSetEntry'}
+    ScenarioSummary:
+      description: >-
+        One row of listScenarios. Without the snapshot on purpose -- twenty rows
+        would otherwise carry twenty full input documents.
+      allOf:
+        - $ref: '#/components/schemas/Scenario'
+        - type: object
+          required: [scenario_name, change_set, order_count]
+          properties:
+            scenario_name: {type: string}
+            parent_scenario_id: {type: [string, 'null']}
+            change_set: {type: array, items: {$ref: '#/components/schemas/ChangeSetEntry'}}
+            order_count: {type: integer, minimum: 0}
+            latest_run_id:
+              type: [string, 'null']
+              description: Null while the scenario has been created but never solved.
     ScenarioInputSnapshot:
       type: object
       required: [schema_version, scenario_id, scenario_type, as_of, timezone, baseline_service_ids, assumptions, shippers, terminals, route_constraints, services, wagons, slots, orders, policy]

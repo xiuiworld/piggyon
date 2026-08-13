@@ -52,6 +52,8 @@ class Store(Protocol):
 
     def get_scenario(self, scenario_id: str) -> dict[str, Any] | None: ...
 
+    def list_scenarios(self, limit: int) -> list[dict[str, Any]]: ...
+
     def update_scenario_state(self, scenario_id: str, state: str) -> None: ...
 
     def save_validation(self, scenario_id: str, result: dict[str, Any]) -> None: ...
@@ -63,6 +65,8 @@ class Store(Protocol):
     def save_run(self, record: dict[str, Any]) -> None: ...
 
     def get_run(self, run_id: str) -> dict[str, Any] | None: ...
+
+    def latest_run_id(self, scenario_id: str) -> str | None: ...
 
     def update_order_outcome(
         self, run_id: str, order_id: str, outcome: dict[str, Any]
@@ -116,6 +120,15 @@ class MemoryStore:
         with self._lock:
             return self._scenarios.get(scenario_id)
 
+    def list_scenarios(self, limit: int) -> list[dict[str, Any]]:
+        with self._lock:
+            records = list(self._scenarios.values())
+        # Newest first, with the id as a tiebreak: two scenarios created inside
+        # the same clock tick would otherwise swap places between calls and the
+        # list would reorder under the reader for no reason.
+        records.sort(key=lambda r: (str(r.get("created_at", "")), r["scenario_id"]), reverse=True)
+        return records[:limit]
+
     def update_scenario_state(self, scenario_id: str, state: str) -> None:
         with self._lock:
             scenario = self._scenarios.get(scenario_id)
@@ -142,6 +155,13 @@ class MemoryStore:
     def get_run(self, run_id: str) -> dict[str, Any] | None:
         with self._lock:
             return self._runs.get(run_id)
+
+    def latest_run_id(self, scenario_id: str) -> str | None:
+        with self._lock:
+            runs = [r for r in self._runs.values() if r.get("scenario_id") == scenario_id]
+        if not runs:
+            return None
+        return max(runs, key=lambda r: (str(r.get("created_at") or ""), r["run_id"]))["run_id"]
 
     def update_order_outcome(
         self, run_id: str, order_id: str, outcome: dict[str, Any]
@@ -232,6 +252,16 @@ class SupabaseStore:
         row = self._one(SCENARIOS_TABLE, "scenario_id", scenario_id)
         return row.get("document") if row else None
 
+    def list_scenarios(self, limit: int) -> list[dict[str, Any]]:
+        response = (
+            self._client.table(SCENARIOS_TABLE)
+            .select("document")
+            .order("created_at", desc=True)
+            .limit(limit)
+            .execute()
+        )
+        return [row["document"] for row in (response.data or []) if row.get("document")]
+
     def update_scenario_state(self, scenario_id: str, state: str) -> None:
         record = self.get_scenario(scenario_id)
         if record is None:
@@ -272,6 +302,22 @@ class SupabaseStore:
     def get_run(self, run_id: str) -> dict[str, Any] | None:
         row = self._one(RUNS_TABLE, "run_id", run_id)
         return row.get("document") if row else None
+
+    def latest_run_id(self, scenario_id: str) -> str | None:
+        # Ordered here rather than in the query: `runs.created_at` is nullable,
+        # and where a NULL sorts differs between PostgREST versions. A scenario
+        # holds a handful of runs, so picking in Python is both cheap and the
+        # same rule the in-memory store applies.
+        response = (
+            self._client.table(RUNS_TABLE)
+            .select("run_id, created_at")
+            .eq("scenario_id", scenario_id)
+            .execute()
+        )
+        rows = response.data or []
+        if not rows:
+            return None
+        return max(rows, key=lambda r: (str(r.get("created_at") or ""), r["run_id"]))["run_id"]
 
     def update_order_outcome(
         self, run_id: str, order_id: str, outcome: dict[str, Any]
