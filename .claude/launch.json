@@ -4,15 +4,7 @@
     {
       "name": "api",
       "runtimeExecutable": "python",
-      "runtimeArgs": [
-        "-m",
-        "uvicorn",
-        "app.main:app",
-        "--app-dir",
-        "C:/Users/xiui/Documents/Projects/piggyon-spec",
-        "--port",
-        "8000"
-      ],
+      "runtimeArgs": ["-m", "uvicorn", "app.main:app", "--port", "8000"],
       "port": 8000
     },
     {
@@ -20,7 +12,7 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": [
         "--prefix",
-        "C:/Users/xiui/Documents/Projects/piggyback-ai",
+        "C:/Users/xiui/Documents/Projects/piggyon_front",
         "run",
         "dev"
       ],
