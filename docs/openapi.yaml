@@ -189,6 +189,13 @@ components:
         input_snapshot: {$ref: '#/components/schemas/ScenarioInputSnapshot'}
         policy_version: {type: string}
         assumption_ids: {type: array, items: {type: string}}
+        parent_scenario_id:
+          type: [string, 'null']
+          description: >-
+            A caller-declared derivation, for snapshots this service does not
+            build itself -- the same scenario with one more order has the same
+            lineage as an alternative and no other way to say so. A label for
+            reading; nothing resolves it.
     Scenario:
       type: object
       required: [scenario_id, state, created_at]

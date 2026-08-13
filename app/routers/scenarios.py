@@ -56,6 +56,7 @@ async def create_scenario(
         # defaults to the caller's document and change its hash, which is
         # supposed to identify what the caller actually sent.
         "input_snapshot": (await request.json())["input_snapshot"],
+        "parent_scenario_id": payload.parent_scenario_id,
     }
     store.save_scenario(record)
 
@@ -135,7 +136,13 @@ def validate_scenario(
     store.save_validation(scenario_id, result)
     # 02 §9: REVIEW_REQUIRED orders are dropped from the solve, they do not
     # block the scenario. Only a scenario with nothing left to compute stays put.
-    if evaluation.has_any_candidate:
+    #
+    # Never backwards. Validation is deterministic over an immutable snapshot,
+    # so running it again is a no-op -- but it used to reset a SOLVED scenario
+    # to READY_TO_SOLVE, and a screen that validates whenever it renders turned
+    # every visit into a downgrade. The scenario would then be listed as
+    # unsolved next to the plan it had already produced.
+    if evaluation.has_any_candidate and scenario["state"] == "VALIDATION_REQUIRED":
         store.update_scenario_state(scenario_id, "READY_TO_SOLVE")
     _trace(
         store,

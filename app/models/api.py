@@ -35,6 +35,12 @@ class ScenarioCreateRequest(BaseModel):
     input_snapshot: ScenarioInputSnapshot
     policy_version: str
     assumption_ids: list[str] = Field(default_factory=list)
+    # A caller-declared derivation, for the snapshots this service does not
+    # build itself. P3 records its own parent when it derives an alternative;
+    # a snapshot assembled elsewhere -- the same scenario with one more order --
+    # has the same lineage and no way to say so. Unvalidated on purpose: it is a
+    # label for reading, not a reference anything resolves.
+    parent_scenario_id: str | None = None
 
 
 class Scenario(BaseModel):

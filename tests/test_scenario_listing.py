@@ -81,6 +81,43 @@ def test_a_solved_scenario_links_to_its_run(
     assert row["state"] == "SOLVED"
 
 
+def test_a_caller_can_declare_what_its_scenario_was_derived_from(
+    client: TestClient, request_body: dict
+) -> None:
+    parent_id = _create(client, request_body)
+
+    # The same snapshot with one more order is a derivation the service did not
+    # perform, so the caller is the only one who can say so.
+    derived_body = {**request_body, "parent_scenario_id": parent_id}
+    derived_id = _create(client, derived_body)
+
+    row = next(
+        r for r in client.get("/v1/scenarios").json() if r["scenario_id"] == derived_id
+    )
+    assert row["parent_scenario_id"] == parent_id
+    assert client.get(f"/v1/scenarios/{derived_id}").json()["parent_scenario_id"] == parent_id
+    # Unclaimed lineage stays null rather than guessing at one.
+    assert client.get(f"/v1/scenarios/{parent_id}").json()["parent_scenario_id"] is None
+
+
+def test_revalidating_a_solved_scenario_keeps_it_solved(
+    client: TestClient, request_body: dict, solver_parameters: dict
+) -> None:
+    scenario_id = _create(client, request_body)
+    client.post(f"/v1/scenarios/{scenario_id}/validate")
+    client.post(
+        f"/v1/scenarios/{scenario_id}/runs",
+        json={"solver_parameters": solver_parameters},
+    )
+    assert client.get(f"/v1/scenarios/{scenario_id}").json()["state"] == "SOLVED"
+
+    # The dashboard validates whenever it renders. Walking the state backwards
+    # would list a scenario as unsolved next to the plan it already produced.
+    client.post(f"/v1/scenarios/{scenario_id}/validate")
+
+    assert client.get(f"/v1/scenarios/{scenario_id}").json()["state"] == "SOLVED"
+
+
 def test_an_alternative_is_listed_with_its_parent_and_change(
     client: TestClient, request_body: dict, solver_parameters: dict
 ) -> None:
