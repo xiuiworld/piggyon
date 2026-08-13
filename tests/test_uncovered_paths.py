@@ -286,3 +286,31 @@ def test_badge_appears_once_an_alternative_is_available() -> None:
 
     assert card["display_badges"] == ["조건부 대안 있음"]
     assert card["display_label"] == "불가"
+
+
+def test_unmatched_order_id_is_reported_not_dropped(monkeypatch, run_with_two_orders) -> None:
+    """A model that spells the id its own way must not look like silence."""
+    monkeypatch.setattr(
+        explain,
+        "_generate",
+        lambda run, outcomes: [
+            {"order_id": "ORD-1", "headline": "편성 가능", "detail": "배정되었습니다."}
+        ],
+    )
+
+    result = explain.build_cards(run_with_two_orders)
+
+    assert result["unmatched_order_ids"] == ["ORD-1"]
+    assert result["replaced_reasons"]["ORD-001"] == "NO_CARD_RETURNED"
+
+
+def test_rejection_reason_names_the_offending_token(run_with_two_orders) -> None:
+    reason = explain._rejection_reason(
+        {"headline": "불가", "detail": "SLT-AM-99 에 배정했습니다."},
+        "ORD-001",
+        {"ORD-001"},
+        {"ASSIGNED"},
+        {"ORD-001", "SLT-AM-01"},
+    )
+
+    assert reason == "UNKNOWN_ENTITY:SLT-AM-99"

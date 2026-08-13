@@ -103,9 +103,16 @@ def build_cards(run: dict[str, Any]) -> dict[str, Any]:
 
     rejections: dict[str, str] = {}
 
+    unmatched: list[str] = []
+
     for card in generated:
         order_id = card.get("order_id")
-        if order_id not in allowed_ids or order_id in cards:
+        if order_id not in allowed_ids:
+            # Do not silently drop it: an id the model spelled its own way is
+            # indistinguishable from "returned nothing" unless it is recorded.
+            unmatched.append(str(order_id))
+            continue
+        if order_id in cards:
             continue
         reason = _rejection_reason(card, order_id, allowed_ids, allowed_codes, entity_ids)
         if reason is None:
@@ -129,13 +136,16 @@ def build_cards(run: dict[str, Any]) -> dict[str, Any]:
                 replaced.append(order_id)
                 rejections.setdefault(order_id, "NO_CARD_RETURNED")
 
-    return {
+    result = {
         "cards": [cards[o["order_id"]] for o in outcomes],
         "source": "LLM" if len(replaced) < len(outcomes) else "TEMPLATE",
         "replaced_order_ids": sorted(replaced),
         # Which guard fired, so a swap to the template is never silent.
         "replaced_reasons": rejections,
     }
+    if unmatched:
+        result["unmatched_order_ids"] = sorted(unmatched)
+    return result
 
 
 def _entity_ids(run: dict[str, Any], outcomes: list[dict]) -> set[str]:
@@ -181,8 +191,21 @@ def _generate(run: dict[str, Any], outcomes: list[dict]) -> list[dict] | None:
 
     import json
 
+    order_ids = [outcome["order_id"] for outcome in outcomes]
+    user_prompt = (
+        f"Write exactly {len(order_ids)} cards, one for each of these order_ids, "
+        f"in this order and spelled exactly like this:\n"
+        f"{json.dumps(order_ids)}\n\n"
+        f"Verified result:\n{json.dumps(payload, ensure_ascii=False)}"
+    )
+
     response = client.complete_json(
-        SYSTEM_PROMPT, json.dumps(payload, ensure_ascii=False)
+        SYSTEM_PROMPT,
+        user_prompt,
+        # Roughly 150 tokens per Korean card, so nine cards need well over the
+        # 1200 this started with; a truncated reply is not valid JSON and would
+        # drop every card at once.
+        max_tokens=max(1200, 260 * len(order_ids)),
     )
     if not response:
         return None
