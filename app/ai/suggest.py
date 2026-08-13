@@ -81,9 +81,14 @@ Rules:
 - When terminal_change_needs_a_service is true, a terminal change on its own
   leaves the order with no service running to the new destination, so pair it
   with the service addition or do not propose it.
-- reason: one Korean sentence saying why that change addresses this order's
-  blocking reason. Write it as something worth trying, never as something that
-  will work.
+- reason: one Korean sentence naming the concrete values involved -- the times,
+  measurements or tags that blocked this order, and what the approved service
+  offers instead -- not a restatement of the reason code. "이 변경이 도움이 될
+  수 있습니다" says nothing the operator did not already know. Write it as
+  something worth trying, never as something that will work.
+- Every number, time and id in that sentence must be copied from order_facts,
+  approved_services or baseline_services. Never write a date, a time or a
+  measurement that does not appear there.
 - Use only the ids, states and reason codes present in the input.
 - Never state a probability, a percentage, a cost or carbon saving, a guarantee,
   or that real-world operation is possible.
@@ -170,6 +175,7 @@ def _candidates(run: dict[str, Any], snapshot: dict[str, Any]) -> dict[str, dict
         if not permitted:
             continue
 
+        window = order.get("adjustment_window") or {}
         candidates[outcome["order_id"]] = {
             "order_id": outcome["order_id"],
             "primary_reason_code": outcome.get("primary_reason_code"),
@@ -179,6 +185,42 @@ def _candidates(run: dict[str, Any], snapshot: dict[str, Any]) -> dict[str, dict
             # Told to the model too, so it cannot propose the move that cannot
             # work on its own.
             "terminal_change_needs_a_service": _needs_pairing(order, snapshot),
+            # The numbers the sentence is supposed to name. Asking for specifics
+            # without supplying them is how a suggestion ends up quoting a date
+            # from no scenario at all: told to be concrete and given nothing
+            # concrete, the model fills the gap.
+            "order_facts": {
+                "ready_at": order.get("ready_at"),
+                "due_at": order.get("due_at"),
+                "gross_weight_kg": order.get("gross_weight_kg"),
+                "dimensions_mm": order.get("dimensions_mm"),
+                "compatibility_tags": order.get("compatibility_tags"),
+                "priority_class": order.get("priority_class"),
+            },
+            "approved_services": [
+                {
+                    "service_id": service["service_id"],
+                    "destination_terminal_id": service.get("destination_terminal_id"),
+                    "planning_cutoff_at": service.get("planning_cutoff_at"),
+                    "departure_at": service.get("departure_at"),
+                    "arrival_at": service.get("arrival_at"),
+                }
+                for service in snapshot.get("services", [])
+                if service["service_id"] in set(window.get("alternative_service_ids") or [])
+            ],
+            "approved_destination_terminal_ids": list(
+                window.get("alternative_destination_terminal_ids") or []
+            ),
+            "baseline_services": [
+                {
+                    "service_id": service["service_id"],
+                    "destination_terminal_id": service.get("destination_terminal_id"),
+                    "planning_cutoff_at": service.get("planning_cutoff_at"),
+                    "arrival_at": service.get("arrival_at"),
+                }
+                for service in snapshot.get("services", [])
+                if service["service_id"] in set(snapshot.get("baseline_service_ids") or [])
+            ],
         }
 
     return candidates
@@ -249,7 +291,14 @@ def build_suggestions(run: dict[str, Any], snapshot: dict[str, Any]) -> dict[str
         suggestions[order_id] = {
             "order_id": order_id,
             "adjustment_types": chosen,
-            "reason": reason,
+            # The pairing sentence stays computed, like the display label and
+            # the badge. It states a fact read off the snapshot -- nothing runs
+            # to the approved destination -- and a model asked to rephrase it
+            # returns something vaguer that drops the reason both changes have
+            # to travel together, which is the only thing worth saying there.
+            "reason": templates[order_id]["reason"]
+            if candidate["terminal_change_needs_a_service"]
+            else reason,
         }
 
     served_by_model = len(candidates) - len(replaced)
