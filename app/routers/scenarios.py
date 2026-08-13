@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Request, Response, status
+from fastapi import APIRouter, Depends, Query, Request, Response, status
 
 from app.errors import ApiError
 from app.models.api import (
@@ -12,6 +12,7 @@ from app.models.api import (
     Scenario,
     ScenarioCreateRequest,
     ScenarioDetail,
+    ScenarioSummary,
     ValidationResult,
 )
 from app.services.planning import build_validation_result, run_baseline, snapshot_of
@@ -55,6 +56,7 @@ async def create_scenario(
         # defaults to the caller's document and change its hash, which is
         # supposed to identify what the caller actually sent.
         "input_snapshot": (await request.json())["input_snapshot"],
+        "parent_scenario_id": payload.parent_scenario_id,
     }
     store.save_scenario(record)
 
@@ -63,6 +65,38 @@ async def create_scenario(
     return Scenario(
         scenario_id=scenario_id, state="VALIDATION_REQUIRED", created_at=created_at
     )
+
+
+@router.get(
+    "",
+    response_model=list[ScenarioSummary],
+    summary="List stored scenarios, newest first",
+)
+def list_scenarios(
+    limit: int = Query(20, ge=1, le=100),
+    store: Store = Depends(get_store),
+) -> list[ScenarioSummary]:
+    """Every scenario this store holds, newest first.
+
+    Without it a scenario is only reachable by an id the caller happened to keep
+    from the response that created it: close the tab and the work is gone, even
+    though the record is still there. The demo could only ever start over.
+    """
+    return [
+        ScenarioSummary(
+            scenario_id=record["scenario_id"],
+            # Older records predate the field; the id is a worse name than a
+            # name but a better one than nothing.
+            scenario_name=record.get("scenario_name") or record["scenario_id"],
+            state=record["state"],
+            created_at=record["created_at"],
+            parent_scenario_id=record.get("parent_scenario_id"),
+            change_set=record.get("change_set") or [],
+            order_count=len((record.get("input_snapshot") or {}).get("orders") or []),
+            latest_run_id=store.latest_run_id(record["scenario_id"]),
+        )
+        for record in store.list_scenarios(limit)
+    ]
 
 
 @router.get(
@@ -75,7 +109,12 @@ def get_scenario(
     scenario_id: str,
     store: Store = Depends(get_store),
 ) -> ScenarioDetail:
-    return ScenarioDetail.model_validate(_require_scenario(store, scenario_id))
+    record = _require_scenario(store, scenario_id)
+    # Resolved at read time rather than stored: a scenario gains runs after it
+    # is written, and a denormalised copy would be stale the moment it did.
+    return ScenarioDetail.model_validate(
+        {**record, "latest_run_id": store.latest_run_id(scenario_id)}
+    )
 
 
 @router.post(
@@ -97,7 +136,13 @@ def validate_scenario(
     store.save_validation(scenario_id, result)
     # 02 §9: REVIEW_REQUIRED orders are dropped from the solve, they do not
     # block the scenario. Only a scenario with nothing left to compute stays put.
-    if evaluation.has_any_candidate:
+    #
+    # Never backwards. Validation is deterministic over an immutable snapshot,
+    # so running it again is a no-op -- but it used to reset a SOLVED scenario
+    # to READY_TO_SOLVE, and a screen that validates whenever it renders turned
+    # every visit into a downgrade. The scenario would then be listed as
+    # unsolved next to the plan it had already produced.
+    if evaluation.has_any_candidate and scenario["state"] == "VALIDATION_REQUIRED":
         store.update_scenario_state(scenario_id, "READY_TO_SOLVE")
     _trace(
         store,

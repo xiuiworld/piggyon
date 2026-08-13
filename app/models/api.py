@@ -35,6 +35,12 @@ class ScenarioCreateRequest(BaseModel):
     input_snapshot: ScenarioInputSnapshot
     policy_version: str
     assumption_ids: list[str] = Field(default_factory=list)
+    # A caller-declared derivation, for the snapshots this service does not
+    # build itself. P3 records its own parent when it derives an alternative;
+    # a snapshot assembled elsewhere -- the same scenario with one more order --
+    # has the same lineage and no way to say so. Unvalidated on purpose: it is a
+    # label for reading, not a reference anything resolves.
+    parent_scenario_id: str | None = None
 
 
 class Scenario(BaseModel):
@@ -60,6 +66,35 @@ class ScenarioDetail(Scenario):
     # Verbatim, for the same reason as ExportBundle.input_snapshot: this is the
     # document `input_snapshot_sha256` was taken over.
     input_snapshot: dict
+    # P3 already writes both onto a derived scenario's record; without them on
+    # the model Pydantic drops them and the lineage is unreadable from the API,
+    # so a screen has no way to say what a derived plan changed or where it came
+    # from. Null on a scenario created directly.
+    parent_scenario_id: str | None = None
+    change_set: list[dict] = Field(default_factory=list)
+    # Lets `/v1/scenarios/{id}` answer on its own. Every link into a scenario --
+    # a list row, a parent, a derived plan -- otherwise has to carry a run id
+    # alongside it, and a link that loses the id lands on a page that cannot
+    # show the plan it was pointing at.
+    latest_run_id: str | None = None
+
+
+class ScenarioSummary(Scenario):
+    """One row of `GET /v1/scenarios`.
+
+    Deliberately without the snapshot: a list of twenty scenarios would
+    otherwise carry twenty full input documents to render twenty lines. Only
+    `order_count` survives from it, which is what a list needs to say how big a
+    scenario is.
+    """
+
+    scenario_name: str
+    parent_scenario_id: str | None = None
+    change_set: list[dict] = Field(default_factory=list)
+    order_count: int
+    # The run a row links to. Null while a scenario has been created but never
+    # solved, which is a real state: the screen offers to solve it instead.
+    latest_run_id: str | None = None
 
 
 class ErrorResponse(BaseModel):
