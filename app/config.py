@@ -21,7 +21,14 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     # Overridable: if the account cannot reach this model the P4 layer logs and
     # falls back to templates rather than failing the request.
-    openai_model: str = "gpt-4o-mini"
+    #
+    # Not the mini tier. The guard catches invented ids and forbidden claims,
+    # not reasoning that is wrong in the right vocabulary, and on the canonical
+    # scenario the smaller model produced exactly that: it told an operator to
+    # move a freight's ready time earlier, said an order had no approved
+    # alternative while its window named one, and recommended a service that
+    # misses the due date by six hours. Every fact it needed was in the payload.
+    openai_model: str = "gpt-4o"
 
     @property
     def supabase_configured(self) -> bool:

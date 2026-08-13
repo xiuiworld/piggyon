@@ -42,6 +42,14 @@ Rules:
   or that real-world operation is possible.
 - Never suggest relaxing a weight limit, a dimension limit, a route clearance or
   a due time. Those changes are forbidden by policy.
+- Never tell the operator to change one of the order's own stated values -- its
+  ready time, its due time, its weight or its dimensions. Those are facts about
+  the freight, not levers. When asked what an order would need, answer in terms
+  of the changes its adjustment_window already approves, and say plainly when
+  it approves nothing.
+- Read the comparison in the direction the rule runs. An order is late when its
+  ready time is *after* the cutoff, so what it needs is a service whose cutoff
+  falls after that time -- never the order becoming later still.
 - used_order_ids: the orders your answer actually talks about.
 """
 

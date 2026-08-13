@@ -40,6 +40,11 @@ Rules:
   never carry a default. A null is a correct answer and is preferred over a
   plausible one.
 - Choose ids only from the lists given in the input. Never invent an id.
+- An id needs a phrase that names it. A place name maps to a terminal; a company
+  named in the text maps to a shipper. Where the text names no shipper at all,
+  shipper_id is null -- picking the first of the list is inventing the customer,
+  and `field_evidence` quoting the whole sentence is the tell that there was
+  nothing to quote.
 - Resolve relative dates and times against `as_of`, and emit ISO 8601 with the
   +09:00 offset.
 - Weight is integer kg, dimensions are integer mm. Convert stated units
