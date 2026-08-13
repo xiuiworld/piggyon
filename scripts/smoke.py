@@ -46,6 +46,15 @@ EXPECTED_PRIMARY = {
 
 failures: list[str] = []
 
+# Every scenario this run brings into being, parents last.
+#
+# The gate writes to whatever it is pointed at, which for a deployment check is
+# production. Each run left a baseline and the two scenarios its alternatives
+# derive, so verifying a deploy quietly cost three rows that nobody would ever
+# open again -- the store reached 187 scenarios of which five were meant to be
+# there, and the demo's own list became unreadable.
+created_scenarios: list[str] = []
+
 
 def check(label: str, condition: bool, detail: str = "") -> None:
     print(f"  [{'ok ' if condition else 'FAIL'}] {label}{'' if condition else f' -> {detail}'}")
@@ -75,6 +84,7 @@ def main() -> int:
         if created.status_code != 201:
             return _finish()
         scenario_id = created.json()["scenario_id"]
+        created_scenarios.append(scenario_id)
         print(f"       scenario_id: {scenario_id}")
 
         section("Scene 1-2  input validation and hard constraints (P1)")
@@ -142,6 +152,8 @@ def main() -> int:
             if not ok:
                 continue
             alt = response.json()
+            # Before the parent, so the delete order below is child-first.
+            created_scenarios.insert(0, alt["alternative_scenario_id"])
             check(f"{order_id} change_set matches", alt["change_set"] == want["change_set"],
                   json.dumps(alt["change_set"], ensure_ascii=False))
             check(f"{order_id} impacts only itself",
@@ -230,7 +242,38 @@ def main() -> int:
                 f"decisions={len(data['decisions'])} trace={len(data['trace_events'])}",
             )
 
+        _clean_up(client)
+
     return _finish()
+
+
+def _clean_up(client: httpx.Client) -> None:
+    """Remove everything this run created, children before parents.
+
+    Deleting a scenario that something was derived from is refused with a 409,
+    which is the right rule and the reason for the ordering here rather than a
+    reason to skip the step.
+
+    Reported as a check like everything else. A gate that leaves rows behind and
+    says nothing is how the store filled up unnoticed; a cleanup that silently
+    fails would hide the same thing one layer down.
+    """
+    section("Cleanup")
+    if not created_scenarios:
+        print("  [ok ] nothing to remove")
+        return
+
+    left: list[str] = []
+    for scenario_id in created_scenarios:
+        response = client.delete(f"/v1/scenarios/{scenario_id}")
+        if response.status_code not in (204, 404):
+            left.append(f"{scenario_id}:{response.status_code}")
+
+    check(
+        f"removed {len(created_scenarios)} scenario(s) this run created",
+        not left,
+        ", ".join(left),
+    )
 
 
 def _finish() -> int:
