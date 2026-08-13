@@ -81,22 +81,27 @@ python scripts/smoke.py
 | P3 조건부 대안 | 완료 |
 | P4 생성형 AI 레이어 (인테이크 + 설명) | 완료 (키 없이도 동작) |
 | P5 결정 · 저장 · 조회 · export | 완료 |
-| P6 통합 · 배포 | 완료 (Supabase + Render, 배포본에서 5장면 통과) |
+| P6 통합 · 배포 | 완료 (Supabase + Fly.io, 배포본에서 5장면 통과) |
 
 ### 엔드포인트
 
 | 메서드·경로 | 응답 |
 | --- | --- |
 | `POST /v1/scenarios` | `201` + `scenario_id`, `state=VALIDATION_REQUIRED` |
+| `GET /v1/scenarios` | 저장된 시나리오 목록 (최신순, 계보·결정 상태 포함) |
 | `GET /v1/scenarios/{id}` | 저장된 시나리오 + 제출된 그대로의 `input_snapshot` |
+| `DELETE /v1/scenarios/{id}` | `204`. 파생본이 남아 있으면 거절한다 |
 | `POST /v1/scenarios/{id}/validate` | 주문별 `input_state`·`eligibility_state`·사유·후보 슬롯 |
+| `GET /v1/scenarios/{id}/validation` | 저장된 검증 결과 읽기. 없으면 `null` — 읽기가 추적 이벤트를 남기지 않는다 |
 | `POST /v1/scenarios/{id}/runs` | `201` + 배정, 주문 결과, 재현성 해시 |
 | `GET /v1/runs/{id}` | 저장된 실행 결과 |
 | `POST /v1/runs/{id}/alternatives` | `201` 대안 + `assignment_deltas` / `200` 대안 없음 / `409` 금지 변경 |
 | `POST /v1/runs/{id}/decisions` | `201` 결정 기록 (`ACCEPTED`는 `OPTIMAL`+`PASS`만) |
 | `GET /v1/runs/{id}/export` | 입력·정책·결과·검증·결정·trace 한 묶음 |
+| `GET /v1/runs/{id}/explanation` | 운영자용 상태 카드 + 대안 제안 |
+| `POST /v1/runs/{id}/questions` | 이 실행에 근거한 답. 근거가 없으면 `grounded=false`로 보류한다 |
 | `POST /v1/intake/orders` | 비정형 의뢰서 → 주문 초안 + 누락 필드 |
-| `GET /v1/runs/{id}/explanation` | 운영자용 상태 카드 |
+| `POST /v1/intake/order-batches` | 한 문서에서 주문 여러 건 |
 | `GET /v1/ai/status` | 생성형 레이어 사용 가능 여부 |
 | `GET /health` | 저장소 백엔드와 도달 가능 여부 |
 
@@ -172,9 +177,9 @@ app/
     planning.py      validate/run 오케스트레이션
     alternatives.py  P3 파생 시나리오·change_set·deltas
   routers/
-    scenarios.py     POST /v1/scenarios, /validate, /runs
+    scenarios.py     시나리오 CRUD, /validate, /validation, /runs
     runs.py          GET /runs/{id}, alternatives, decisions, export
-    ai.py            intake, explanation, ai/status
+    ai.py            intake, explanation, questions, ai/status
 data/canonical-v1/   당일 레포에서 재작성한 정본 입력
 data/samples/        데모용 비정형 의뢰서 샘플
 supabase/migrations/ Postgres 스키마
@@ -195,16 +200,21 @@ tests/               pytest
 npx supabase@latest db push
 ```
 
-## 배포 (Render)
+## 롤백 경로 (Render)
 
-`render.yaml` 블루프린트가 있다. Render 대시보드에서 **New → Blueprint**로 이 저장소를
-가리킨다. `SUPABASE_URL`·`SUPABASE_KEY`·`OPENAI_API_KEY`는 `sync: false`라 Render가 값을
+현행 배포는 위의 Fly 다. `render.yaml` 블루프린트는 되돌릴 자리로 남겨 뒀다 —
+Render 대시보드에서 **New → Blueprint**로 이 저장소를 가리키면 된다.
+`SUPABASE_URL`·`SUPABASE_KEY`·`OPENAI_API_KEY`는 `sync: false`라 Render가 값을
 물어보고, 저장소에는 들어가지 않는다.
 
-무료 플랜 웹 서비스는 유휴 시 슬립에 들어가 첫 요청이 느리다. 심사 기간 동안 URL이
-살아 있어야 한다면(08) 유료 인스턴스나 외부 핑을 고려한다.
+무료 플랜은 15분 유휴면 슬립에 들어가고, 이 서비스는 ortools 임포트 때문에 콜드
+스타트가 특히 길다(측정 20초). Fly 로 옮긴 이유가 그것이다 —
+[docs/11-deployment.md](docs/11-deployment.md).
+
+되살릴 때는 **같은 Supabase 를 두 서비스가 함께 쓰게 된다**는 걸 염두에 둔다.
+심사 기간에는 한쪽만 켜 두는 편이 낫다.
 
 ## 참고 문서
 
-계약의 정본은 `docs/openapi.yaml`이다. `docs/01`~`09`가 요구사항·상태 모델·데이터
-계약·아키텍처·테스트·데모 흐름·구현 계획을 담는다.
+계약의 정본은 `docs/openapi.yaml`이다. `docs/01`~`11`이 요구사항·상태 모델·데이터
+계약·아키텍처·테스트·데모 흐름·구현 계획·AI 사용·배포를 담는다.
