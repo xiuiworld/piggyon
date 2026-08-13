@@ -50,6 +50,32 @@ paths:
       responses:
         '200': {description: Stored scenario, content: {application/json: {schema: {$ref: '#/components/schemas/ScenarioDetail'}}}}
         '404': {$ref: '#/components/responses/NotFound'}
+    delete:
+      operationId: deleteScenario
+      summary: Delete a scenario and everything recorded against it
+      description: >-
+        Removes the scenario, its runs, its decisions and its trace. Refused
+        while anything was derived from it: a derived scenario records the id it
+        came from, and deleting the parent would leave it pointing at nothing.
+      parameters: [{$ref: '#/components/parameters/ScenarioId'}]
+      responses:
+        '204': {description: Deleted}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/PolicyViolation'}
+  /v1/scenarios/{scenario_id}/validation:
+    get:
+      operationId: readValidation
+      summary: Read the stored validation result
+      description: >-
+        validateScenario is a POST because it computes, stores and records a
+        VALIDATION_COMPLETED event. A screen that shows candidate slots would
+        otherwise append to the audit trail every time it rendered, and the
+        trail would stop describing what anyone actually did.
+      parameters: [{$ref: '#/components/parameters/ScenarioId'}]
+      responses:
+        '200': {description: Stored validation, content: {application/json: {schema: {$ref: '#/components/schemas/ValidationResult'}}}}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '422': {$ref: '#/components/responses/ValidationRequired'}
   /v1/scenarios/{scenario_id}/validate:
     post:
       operationId: validateScenario
@@ -244,6 +270,11 @@ components:
             latest_run_id:
               type: [string, 'null']
               description: Null while the scenario has been created but never solved.
+            decision_state:
+              type: [string, 'null']
+              description: >-
+                The decision standing on that run, so a list can separate
+                settled scenarios from open ones. Null when none was recorded.
     ScenarioInputSnapshot:
       type: object
       required: [schema_version, scenario_id, scenario_type, as_of, timezone, baseline_service_ids, assumptions, shippers, terminals, route_constraints, services, wagons, slots, orders, policy]
