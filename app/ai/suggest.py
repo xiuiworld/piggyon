@@ -57,6 +57,11 @@ TEMPLATE_TEXT = {
 
 NEUTRAL_TEXT = "승인된 변경을 하나씩 적용해 결과를 확인하세요."
 
+PAIRED_TEXT = (
+    "승인된 대체 터미널로 가는 기준 운행이 없어, 터미널만 바꾸면 실을 열차가 없습니다. "
+    "터미널 변경과 운행 추가를 함께 시도해야 합니다."
+)
+
 SYSTEM_PROMPT = """\
 You advise a rail slot planning operator on which approved change to try first
 for an order the baseline plan could not carry.
@@ -69,9 +74,13 @@ Return JSON: {"suggestions": [{"order_id": string, "adjustment_types": [string],
 
 Rules:
 - One entry per order given, same order_id spelling, no extra orders.
-- adjustment_types must be chosen from that order's permitted list, most
-  promising first. Never invent a type and never name one that is not permitted
-  for that order.
+- adjustment_types is the exact set to apply together, chosen from that order's
+  permitted list. Prefer the smallest set that addresses the blocking reason;
+  do not include a change that has nothing to do with it. Never invent a type
+  and never name one that is not permitted for that order.
+- When terminal_change_needs_a_service is true, a terminal change on its own
+  leaves the order with no service running to the new destination, so pair it
+  with the service addition or do not propose it.
 - reason: one Korean sentence saying why that change addresses this order's
   blocking reason. Write it as something worth trying, never as something that
   will work.
@@ -97,21 +106,47 @@ def permitted_adjustments(order: dict[str, Any]) -> list[str]:
     return types
 
 
-def _rank(permitted: list[str], reason_code: str | None) -> list[str]:
+def _needs_pairing(order: dict[str, Any], snapshot: dict[str, Any]) -> bool:
+    """Whether moving the destination is useless without also opening a service.
+
+    Changing the destination terminal only re-points the order; it does not put
+    a train on the new leg. If nothing in the validation scope already runs to
+    an approved destination, the derived scenario has the order headed somewhere
+    no permitted service goes, and the search comes back empty every time.
+
+    Read off the snapshot, so this is a fact about the scenario rather than a
+    guess about the solver. On the canonical fixture it is true of ORD-008:
+    TRM-C is served by SVC-AC-01 alone, which is not in the baseline.
+    """
+    window = order.get("adjustment_window") or {}
+    approved = set(window.get("alternative_destination_terminal_ids") or [])
+    if not approved:
+        return False
+
+    in_scope = set(snapshot.get("baseline_service_ids") or [])
+    return not any(
+        service.get("destination_terminal_id") in approved
+        for service in snapshot.get("services", [])
+        if service.get("service_id") in in_scope
+    )
+
+
+def _template(
+    permitted: list[str],
+    reason_code: str | None,
+    pair: bool,
+) -> dict[str, Any]:
+    if pair and set(permitted) >= {"CHANGE_TO_APPROVED_TERMINAL", "ADD_ORDER_APPROVED_SERVICE"}:
+        return {
+            "adjustment_types": ["CHANGE_TO_APPROVED_TERMINAL", "ADD_ORDER_APPROVED_SERVICE"],
+            "reason": PAIRED_TEXT,
+        }
+
     preferred = ADJUSTMENT_FOR_REASON.get(reason_code or "")
-    if preferred is None or preferred not in permitted:
-        return list(permitted)
-    return [preferred] + [t for t in permitted if t != preferred]
+    if preferred is not None and preferred in permitted:
+        return {"adjustment_types": [preferred], "reason": TEMPLATE_TEXT[preferred]}
 
-
-def _template(permitted: list[str], reason_code: str | None) -> dict[str, Any]:
-    ranked = _rank(permitted, reason_code)
-    first = ranked[0] if ranked else None
-    aimed = ADJUSTMENT_FOR_REASON.get(reason_code or "") == first
-    return {
-        "adjustment_types": ranked,
-        "reason": TEMPLATE_TEXT[first] if (first and aimed) else NEUTRAL_TEXT,
-    }
+    return {"adjustment_types": list(permitted), "reason": NEUTRAL_TEXT}
 
 
 def _candidates(run: dict[str, Any], snapshot: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -141,6 +176,9 @@ def _candidates(run: dict[str, Any], snapshot: dict[str, Any]) -> dict[str, dict
             "eligibility_state": outcome.get("eligibility_state"),
             "assignment_state": outcome.get("assignment_state"),
             "permitted_adjustment_types": permitted,
+            # Told to the model too, so it cannot propose the move that cannot
+            # work on its own.
+            "terminal_change_needs_a_service": _needs_pairing(order, snapshot),
         }
 
     return candidates
@@ -155,7 +193,11 @@ def build_suggestions(run: dict[str, Any], snapshot: dict[str, Any]) -> dict[str
     templates = {
         order_id: {
             "order_id": order_id,
-            **_template(c["permitted_adjustment_types"], c["primary_reason_code"]),
+            **_template(
+                c["permitted_adjustment_types"],
+                c["primary_reason_code"],
+                c["terminal_change_needs_a_service"],
+            ),
         }
         for order_id, c in candidates.items()
     }

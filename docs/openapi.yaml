@@ -776,10 +776,10 @@ components:
           type: array
           items: {type: string}
           description: >-
-            Which approved change to try first, most promising first. Present
-            only on an order the plan left out that still has an approval
-            window. A proposal, not an answer -- the alternative search decides,
-            and often refuses.
+            The exact set of approved changes to apply together, usually one.
+            Present only on an order the plan left out that still has an
+            approval window. A proposal, not an answer -- the alternative search
+            decides, and often refuses.
         suggestion:
           type: string
           description: One sentence on why that change addresses this order's block.

@@ -50,21 +50,53 @@ def test_suggestions_appear_only_where_something_is_approved(
     assert "suggested_adjustment_types" not in by_order["ORD-006"]
 
 
-def test_a_suggestion_leads_with_the_change_aimed_at_the_block(
+def test_a_suggestion_asks_for_the_change_aimed_at_the_block(
     client: TestClient, solved_run: dict
 ) -> None:
     cards = client.get(f"/v1/runs/{solved_run['run_id']}/explanation").json()["cards"]
     by_order = {c["order_id"]: c for c in cards}
 
-    # ORD-008 is approved for both, and is blocked on the destination's handling
-    # tags, so the terminal change is the one worth trying first.
-    assert by_order["ORD-008"]["suggested_adjustment_types"][0] == (
-        "CHANGE_TO_APPROVED_TERMINAL"
-    )
-    assert set(by_order["ORD-008"]["suggested_adjustment_types"]) == {
-        "ADD_ORDER_APPROVED_SERVICE",
+    # Blocked on time, approved for a later service: one change, not a bundle.
+    assert by_order["ORD-005"]["suggested_adjustment_types"] == [
+        "ADD_ORDER_APPROVED_SERVICE"
+    ]
+
+
+def test_a_terminal_change_is_paired_when_nothing_runs_to_the_new_terminal(
+    client: TestClient, solved_run: dict
+) -> None:
+    """The one case where two changes have to travel together.
+
+    ORD-008 is approved for TRM-C, which only SVC-AC-01 serves, and that is not
+    in the baseline. Re-pointing the order without opening the service leaves it
+    headed somewhere no permitted train goes, so the search comes back empty
+    every single time -- advice that is wrong before it is tried.
+    """
+    cards = client.get(f"/v1/runs/{solved_run['run_id']}/explanation").json()["cards"]
+    suggested = next(c for c in cards if c["order_id"] == "ORD-008")
+
+    assert set(suggested["suggested_adjustment_types"]) == {
         "CHANGE_TO_APPROVED_TERMINAL",
+        "ADD_ORDER_APPROVED_SERVICE",
     }
+
+    # The pair works where the terminal change alone does not, which is the
+    # whole reason for pairing them.
+    alone = client.post(
+        f"/v1/runs/{solved_run['run_id']}/alternatives",
+        json={"order_id": "ORD-008", "adjustment_types": ["CHANGE_TO_APPROVED_TERMINAL"]},
+    )
+    assert alone.status_code == 200
+    assert alone.json()["status"] == "NO_FEASIBLE_ALTERNATIVE"
+
+    paired = client.post(
+        f"/v1/runs/{solved_run['run_id']}/alternatives",
+        json={
+            "order_id": "ORD-008",
+            "adjustment_types": suggested["suggested_adjustment_types"],
+        },
+    )
+    assert paired.status_code == 201, paired.text
 
 
 def test_a_suggested_change_is_one_the_alternative_endpoint_accepts(
