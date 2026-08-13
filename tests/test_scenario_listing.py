@@ -130,6 +130,9 @@ def test_detail_carries_the_lineage_too(
 
     assert derived["parent_scenario_id"] == scenario_id
     assert derived["change_set"][0]["service_id"] == "SVC-NEXT-01"
+    # A link into a scenario should not need a run id beside it.
+    assert derived["latest_run_id"].startswith("RUN-ALT-")
+    assert parent["latest_run_id"] == run_id
     # A scenario created directly has no lineage, and says so rather than
     # omitting the fields.
     assert parent["parent_scenario_id"] is None

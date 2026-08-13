@@ -66,6 +66,11 @@ class ScenarioDetail(Scenario):
     # from. Null on a scenario created directly.
     parent_scenario_id: str | None = None
     change_set: list[dict] = Field(default_factory=list)
+    # Lets `/v1/scenarios/{id}` answer on its own. Every link into a scenario --
+    # a list row, a parent, a derived plan -- otherwise has to carry a run id
+    # alongside it, and a link that loses the id lands on a page that cannot
+    # show the plan it was pointing at.
+    latest_run_id: str | None = None
 
 
 class ScenarioSummary(Scenario):

@@ -108,7 +108,12 @@ def get_scenario(
     scenario_id: str,
     store: Store = Depends(get_store),
 ) -> ScenarioDetail:
-    return ScenarioDetail.model_validate(_require_scenario(store, scenario_id))
+    record = _require_scenario(store, scenario_id)
+    # Resolved at read time rather than stored: a scenario gains runs after it
+    # is written, and a denormalised copy would be stale the moment it did.
+    return ScenarioDetail.model_validate(
+        {**record, "latest_run_id": store.latest_run_id(scenario_id)}
+    )
 
 
 @router.post(

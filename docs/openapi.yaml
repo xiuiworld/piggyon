@@ -216,6 +216,11 @@ components:
               type: array
               description: What the derivation changed. Empty on a scenario created directly.
               items: {$ref: '#/components/schemas/ChangeSetEntry'}
+            latest_run_id:
+              type: [string, 'null']
+              description: >-
+                The scenario's most recent run, so a link into a scenario does
+                not have to carry a run id beside it. Null before it is solved.
     ScenarioSummary:
       description: >-
         One row of listScenarios. Without the snapshot on purpose -- twenty rows
