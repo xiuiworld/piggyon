@@ -285,7 +285,9 @@ def test_badge_appears_once_an_alternative_is_available() -> None:
     card = explain.build_cards(run)["cards"][0]
 
     assert card["display_badges"] == ["조건부 대안 있음"]
-    assert card["display_label"] == "불가"
+    # 02 §4.7, not 불가: that label is rule 6's, and printed beside this badge
+    # it tells the operator the order is impossible and has an alternative.
+    assert card["display_label"] == "기본안 불가"
 
 
 def test_unmatched_order_id_is_reported_not_dropped(monkeypatch, run_with_two_orders) -> None:

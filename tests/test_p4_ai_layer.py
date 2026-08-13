@@ -95,6 +95,56 @@ def test_display_labels_follow_the_state_rules(baseline_run: dict) -> None:
     assert labels["ORD-007"] == "기본안 불가·대안 미검토"
 
 
+def test_each_alternative_state_gets_its_own_ineligible_label() -> None:
+    """02 §4.5-7: three states, three labels, none of them shared."""
+    def label(alternative_state: str) -> str:
+        return explain._display_label(
+            {
+                "order_id": "ORD-005",
+                "input_state": "VALID",
+                "eligibility_state": "INELIGIBLE",
+                "assignment_state": "NOT_APPLICABLE",
+                "alternative_state": alternative_state,
+                "primary_reason_code": "READY_AFTER_CUTOFF",
+            }
+        )
+
+    assert label("NOT_SEARCHED") == "기본안 불가·대안 미검토"
+    assert label("AVAILABLE") == "기본안 불가"
+    assert label("NONE") == "불가"
+    assert len({label(s) for s in ("NOT_SEARCHED", "AVAILABLE", "NONE")}) == 3
+
+
+def test_finding_an_alternative_never_labels_the_order_impossible(
+    client: TestClient, baseline_run: dict, expected: dict
+) -> None:
+    """The dashboard must not print 불가 and 조건부 대안 있음 on one row.
+
+    Both orders start the run at 기본안 불가·대안 미검토. Searching moves only
+    `alternative_state` (02 §9.5), so the label may only move to where that
+    search landed: ORD-005 found one and keeps a baseline-scoped label with the
+    badge; ORD-007 exhausted the approved changes and is the 불가 case.
+    """
+    run_id = baseline_run["run_id"]
+
+    for order_id in ("ORD-005", "ORD-007"):
+        client.post(
+            f"/v1/runs/{run_id}/alternatives",
+            json=expected["alternatives"][order_id]["request"],
+        )
+
+    cards = {c["order_id"]: c for c in client.get(f"/v1/runs/{run_id}/explanation").json()["cards"]}
+
+    assert cards["ORD-005"]["display_label"] == "기본안 불가"
+    assert cards["ORD-005"]["display_badges"] == ["조건부 대안 있음"]
+    assert cards["ORD-007"]["display_label"] == "불가"
+    assert cards["ORD-007"]["display_badges"] == []
+    # The pairing itself, whatever the wording: 불가 is the terminal verdict.
+    assert not any(
+        c["display_label"] == "불가" and c["display_badges"] for c in cards.values()
+    )
+
+
 def test_generated_card_naming_a_foreign_order_is_replaced() -> None:
     grounded = explain._is_grounded(
         {"headline": "편성 가능", "detail": "ORD-002 때문에 밀렸습니다."},
