@@ -175,6 +175,95 @@ def structure_request(
     }
 
 
+BATCH_SYSTEM_PROMPT = SYSTEM_PROMPT.replace(
+    "Return a JSON object with `order_draft`, `field_evidence` and\n"
+    "`assumptions_flagged`.",
+    "Return a JSON object with `orders`, a list. Each entry has `order_draft`,\n"
+    "`field_evidence` and `assumptions_flagged`.",
+).replace(
+    "Rules:",
+    "Rules:\n"
+    "- One entry per transport unit the document asks for. A request for three\n"
+    "  trailers is three entries, even where they share a weight or a route.\n"
+    "- Split only on what the text states. Never multiply an order to reach a\n"
+    "  round number, and never merge two that differ.",
+)
+
+MAX_BATCH_ORDERS = 20
+
+
+def structure_requests(
+    text: str,
+    as_of: str | None = None,
+    vocabulary: dict[str, list[str]] | None = None,
+    max_orders: int = MAX_BATCH_ORDERS,
+) -> dict[str, Any]:
+    """Structure a document that asks for more than one order.
+
+    A real request arrives as one message about five trailers, and running the
+    single-order path over it silently keeps whichever one the model happened to
+    read first. Splitting is the model's job; everything after the split is the
+    single-order pipeline unchanged, so a batched draft gets exactly the same
+    sanitising, the same missing-field reporting and the same refusal to invent.
+
+    Without the generative layer there is no split to make -- the rule extractor
+    reads one document as one order -- so the fallback returns a single draft and
+    says so.
+    """
+    vocabulary = vocabulary or default_vocabulary()
+
+    response = client.complete_json(
+        BATCH_SYSTEM_PROMPT,
+        _user_prompt(text, as_of, vocabulary),
+        max_tokens=max(1200, 500 * 3),
+    )
+
+    raw_orders = (response or {}).get("orders")
+    if not isinstance(raw_orders, list) or not raw_orders:
+        # One order, by the ordinary path, rather than a batch of one dressed up
+        # as something the layer did not actually do.
+        single = structure_request(text, as_of=as_of, vocabulary=vocabulary)
+        return {"orders": [single], "source": single["source"], "truncated": False}
+
+    truncated = len(raw_orders) > max_orders
+    orders = [
+        _finish(entry, vocabulary, source="LLM")
+        for entry in raw_orders[:max_orders]
+        if isinstance(entry, dict)
+    ]
+
+    return {"orders": orders, "source": "LLM", "truncated": truncated}
+
+
+def _finish(
+    entry: dict[str, Any],
+    vocabulary: dict[str, list[str]],
+    source: str,
+) -> dict[str, Any]:
+    """The half of `structure_request` that runs after the model has spoken."""
+    draft = _sanitise(entry.get("order_draft") or {}, vocabulary)
+    missing = _missing_fields(draft)
+    evidence = [
+        e
+        for e in (entry.get("field_evidence") or [])
+        if draft.get(str(e.get("field", "")).split(".")[0])
+    ]
+
+    return {
+        "order_draft": draft,
+        "missing_fields": missing,
+        "review_reasons": [
+            {"field": field, "reason_code": "MISSING_REQUIRED_FIELD"} for field in missing
+        ],
+        "field_evidence": evidence,
+        "assumptions_flagged": entry.get("assumptions_flagged") or [],
+        "input_state": "REVIEW_REQUIRED" if missing else "VALID",
+        "reason_codes": ["MISSING_REQUIRED_FIELD"] if missing else [],
+        "source": source,
+        "assumption_note": "DEMO_ASSUMPTION",
+    }
+
+
 def _missing_fields(draft: dict[str, Any]) -> list[str]:
     """Required values still absent, named precisely enough to chase up.
 

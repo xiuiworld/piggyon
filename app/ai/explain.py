@@ -226,20 +226,24 @@ def _generate(run: dict[str, Any], outcomes: list[dict]) -> list[dict] | None:
     return cards if isinstance(cards, list) else None
 
 
-def _rejection_reason(
-    card: dict[str, Any],
-    order_id: str,
+def rejection_reason_for_text(
+    text: str,
     allowed_ids: set[str],
     allowed_codes: set[str],
     entity_ids: set[str] | None = None,
+    scope_order_id: str | None = None,
 ) -> str | None:
-    """Why this card cannot be served, or None when nothing was invented.
+    """Why this sentence cannot be served, or None when nothing was invented.
 
-    Returning the reason rather than a bare bool is what makes the guard
-    debuggable: a silent swap to the template looks identical whether the
-    model hallucinated or the guard is simply too strict.
+    Split out of the card check so every generated sentence in the service goes
+    through the same wall -- a suggestion and an answer to a question are the
+    same risk as a card, and a second guard written later would drift from this
+    one exactly where it mattered.
+
+    `scope_order_id` is the card case: a card about ORD-004 that talks about
+    ORD-007 is wrong even though both exist. An answer to a question is allowed
+    to range across the run, so it passes None.
     """
-    text = f"{card.get('headline', '')} {card.get('detail', '')}"
     entity_ids = entity_ids if entity_ids is not None else allowed_ids
 
     if not text.strip():
@@ -249,11 +253,12 @@ def _rejection_reason(
         if pattern.search(text):
             return f"FORBIDDEN_CLAIM:{pattern.pattern}"
 
-    # Any order it names must exist, and must be the one it is about.
+    # Any order it names must exist, and -- when scoped -- must be the one it
+    # is about.
     for mentioned in ORDER_ID.findall(text):
         if mentioned not in allowed_ids:
             return f"UNKNOWN_ORDER:{mentioned}"
-        if mentioned != order_id:
+        if scope_order_id is not None and mentioned != scope_order_id:
             return f"FOREIGN_ORDER:{mentioned}"
 
     # Any entity it names must appear in this run.
@@ -274,6 +279,28 @@ def _rejection_reason(
         return f"UNKNOWN_TOKEN:{token}"
 
     return None
+
+
+def _rejection_reason(
+    card: dict[str, Any],
+    order_id: str,
+    allowed_ids: set[str],
+    allowed_codes: set[str],
+    entity_ids: set[str] | None = None,
+) -> str | None:
+    """Why this card cannot be served, or None when nothing was invented.
+
+    Returning the reason rather than a bare bool is what makes the guard
+    debuggable: a silent swap to the template looks identical whether the
+    model hallucinated or the guard is simply too strict.
+    """
+    return rejection_reason_for_text(
+        f"{card.get('headline', '')} {card.get('detail', '')}",
+        allowed_ids,
+        allowed_codes,
+        entity_ids,
+        scope_order_id=order_id,
+    )
 
 
 def _is_grounded(
