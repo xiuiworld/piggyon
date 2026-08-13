@@ -54,6 +54,8 @@ class Store(Protocol):
 
     def list_scenarios(self, limit: int) -> list[dict[str, Any]]: ...
 
+    def delete_scenario(self, scenario_id: str) -> None: ...
+
     def update_scenario_state(self, scenario_id: str, state: str) -> None: ...
 
     def save_validation(self, scenario_id: str, result: dict[str, Any]) -> None: ...
@@ -67,6 +69,8 @@ class Store(Protocol):
     def get_run(self, run_id: str) -> dict[str, Any] | None: ...
 
     def latest_run_id(self, scenario_id: str) -> str | None: ...
+
+    def list_run_ids(self, scenario_id: str) -> list[str]: ...
 
     def update_order_outcome(
         self, run_id: str, order_id: str, outcome: dict[str, Any]
@@ -129,6 +133,17 @@ class MemoryStore:
         records.sort(key=lambda r: (str(r.get("created_at", "")), r["scenario_id"]), reverse=True)
         return records[:limit]
 
+    def delete_scenario(self, scenario_id: str) -> None:
+        with self._lock:
+            self._scenarios.pop(scenario_id, None)
+            self._validations.pop(scenario_id, None)
+            self._trace.pop(scenario_id, None)
+            for run_id in [
+                rid for rid, run in self._runs.items() if run.get("scenario_id") == scenario_id
+            ]:
+                self._runs.pop(run_id, None)
+                self._decisions.pop(run_id, None)
+
     def update_scenario_state(self, scenario_id: str, state: str) -> None:
         with self._lock:
             scenario = self._scenarios.get(scenario_id)
@@ -162,6 +177,12 @@ class MemoryStore:
         if not runs:
             return None
         return max(runs, key=lambda r: (str(r.get("created_at") or ""), r["run_id"]))["run_id"]
+
+    def list_run_ids(self, scenario_id: str) -> list[str]:
+        with self._lock:
+            return sorted(
+                rid for rid, run in self._runs.items() if run.get("scenario_id") == scenario_id
+            )
 
     def update_order_outcome(
         self, run_id: str, order_id: str, outcome: dict[str, Any]
@@ -262,6 +283,16 @@ class SupabaseStore:
         )
         return [row["document"] for row in (response.data or []) if row.get("document")]
 
+    def delete_scenario(self, scenario_id: str) -> None:
+        # Children first: `runs` and `decisions` carry foreign keys, so deleting
+        # the scenario row on its own is refused by the database rather than
+        # cascading. Trace rows are keyed by scenario id without a constraint.
+        for run_id in self.list_run_ids(scenario_id):
+            self._client.table(DECISIONS_TABLE).delete().eq("run_id", run_id).execute()
+        self._client.table(RUNS_TABLE).delete().eq("scenario_id", scenario_id).execute()
+        self._client.table(TRACE_TABLE).delete().eq("scenario_id", scenario_id).execute()
+        self._client.table(SCENARIOS_TABLE).delete().eq("scenario_id", scenario_id).execute()
+
     def update_scenario_state(self, scenario_id: str, state: str) -> None:
         record = self.get_scenario(scenario_id)
         if record is None:
@@ -318,6 +349,15 @@ class SupabaseStore:
         if not rows:
             return None
         return max(rows, key=lambda r: (str(r.get("created_at") or ""), r["run_id"]))["run_id"]
+
+    def list_run_ids(self, scenario_id: str) -> list[str]:
+        response = (
+            self._client.table(RUNS_TABLE)
+            .select("run_id")
+            .eq("scenario_id", scenario_id)
+            .execute()
+        )
+        return sorted(row["run_id"] for row in (response.data or []))
 
     def update_order_outcome(
         self, run_id: str, order_id: str, outcome: dict[str, Any]

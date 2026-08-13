@@ -95,6 +95,9 @@ class ScenarioSummary(Scenario):
     # The run a row links to. Null while a scenario has been created but never
     # solved, which is a real state: the screen offers to solve it instead.
     latest_run_id: str | None = None
+    # The decision standing on that run, so a list can separate the scenarios
+    # already settled from the ones still open. Null when none was recorded.
+    decision_state: str | None = None
 
 
 class ErrorResponse(BaseModel):

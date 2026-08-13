@@ -83,20 +83,31 @@ def list_scenarios(
     though the record is still there. The demo could only ever start over.
     """
     return [
-        ScenarioSummary(
-            scenario_id=record["scenario_id"],
-            # Older records predate the field; the id is a worse name than a
-            # name but a better one than nothing.
-            scenario_name=record.get("scenario_name") or record["scenario_id"],
-            state=record["state"],
-            created_at=record["created_at"],
-            parent_scenario_id=record.get("parent_scenario_id"),
-            change_set=record.get("change_set") or [],
-            order_count=len((record.get("input_snapshot") or {}).get("orders") or []),
-            latest_run_id=store.latest_run_id(record["scenario_id"]),
-        )
+        _summarise(store, record)
         for record in store.list_scenarios(limit)
     ]
+
+
+def _summarise(store: Store, record: dict) -> ScenarioSummary:
+    latest_run_id = store.latest_run_id(record["scenario_id"])
+    # The standing decision is the last one recorded: a run can be held and then
+    # accepted, and a list that showed the first would say the opposite of where
+    # the scenario ended up.
+    decisions = store.list_decisions(latest_run_id) if latest_run_id else []
+
+    return ScenarioSummary(
+        scenario_id=record["scenario_id"],
+        # Older records predate the field; the id is a worse name than a name
+        # but a better one than nothing.
+        scenario_name=record.get("scenario_name") or record["scenario_id"],
+        state=record["state"],
+        created_at=record["created_at"],
+        parent_scenario_id=record.get("parent_scenario_id"),
+        change_set=record.get("change_set") or [],
+        order_count=len((record.get("input_snapshot") or {}).get("orders") or []),
+        latest_run_id=latest_run_id,
+        decision_state=decisions[-1]["decision_state"] if decisions else None,
+    )
 
 
 @router.get(
@@ -115,6 +126,76 @@ def get_scenario(
     return ScenarioDetail.model_validate(
         {**record, "latest_run_id": store.latest_run_id(scenario_id)}
     )
+
+
+@router.get(
+    "/{scenario_id}/validation",
+    response_model=ValidationResult,
+    summary="Read the stored validation result",
+    responses={
+        404: {"model": ErrorResponse, "description": "Scenario not found"},
+        422: {"model": ErrorResponse, "description": "Scenario has not been validated"},
+    },
+)
+def read_validation(
+    scenario_id: str,
+    store: Store = Depends(get_store),
+) -> ValidationResult:
+    """The validation this scenario already has, without producing another.
+
+    Validating is a POST because it computes and stores, and it also records a
+    `VALIDATION_COMPLETED` event. A screen that shows candidate slots therefore
+    could not read them without appending to the audit trail -- so a dashboard
+    that validated on every render logged a visit as an action, and the trail
+    stopped describing what anyone did.
+    """
+    _require_scenario(store, scenario_id)
+
+    stored = store.get_validation(scenario_id)
+    if stored is None:
+        raise ApiError(
+            "VALIDATION_REQUIRED",
+            f"Scenario {scenario_id} has not been validated yet.",
+        )
+    return ValidationResult.model_validate(stored)
+
+
+@router.delete(
+    "/{scenario_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete a scenario and everything recorded against it",
+    responses={
+        404: {"model": ErrorResponse, "description": "Scenario not found"},
+        409: {"model": ErrorResponse, "description": "Scenario has derived scenarios"},
+    },
+)
+def delete_scenario(
+    scenario_id: str,
+    store: Store = Depends(get_store),
+) -> Response:
+    """Remove a scenario, its runs, its decisions and its trace.
+
+    Refused while anything was derived from it. A derived scenario records the
+    id it came from and a screen reads that lineage back; deleting the parent
+    would leave the child pointing at nothing, and its `기본안 대비` comparison
+    with no baseline to compare against.
+    """
+    _require_scenario(store, scenario_id)
+
+    children = [
+        s["scenario_id"]
+        for s in store.list_scenarios(100)
+        if s.get("parent_scenario_id") == scenario_id
+    ]
+    if children:
+        raise ApiError(
+            "POLICY_VIOLATION",
+            f"Scenario {scenario_id} has derived scenarios; delete those first.",
+            details=[{"derived_scenario_id": child} for child in children],
+        )
+
+    store.delete_scenario(scenario_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post(
