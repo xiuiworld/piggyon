@@ -20,3 +20,9 @@ services:
         sync: false
       - key: SUPABASE_KEY
         sync: false
+      # Optional. Without it P4 falls back to rule-based extraction and
+      # template sentences, and the demo still runs end to end.
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_MODEL
+        value: gpt-4o-mini
