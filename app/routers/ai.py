@@ -60,7 +60,23 @@ def structure_intake_batch(payload: IntakeRequest) -> dict:
     responses={404: {"model": ErrorResponse, "description": "Run not found"}},
 )
 def run_explanation(run_id: str, store: Store = Depends(get_store)) -> dict:
+    """Generated once, then read.
+
+    A run is immutable once solved, so its explanation is too. Generating on
+    every read put two model calls and six seconds in front of every render --
+    and, worse, the sentences drifted: the same plan described itself
+    differently on each visit, and the downloaded bundle did not say what the
+    operator had been reading when they decided.
+
+    The alternative search is the one thing that changes a solved run, and it
+    clears this so the next read regenerates.
+    """
     run = _require_run(store, run_id)
+
+    stored = store.get_explanation(run_id)
+    if stored is not None:
+        return stored
+
     cards = explain.build_cards(run)
 
     # Which approved change to try first, for the orders the plan left out.
@@ -78,6 +94,7 @@ def run_explanation(run_id: str, store: Store = Depends(get_store)) -> dict:
             card["suggestion"] = entry["reason"]
         cards["suggestion_source"] = proposed["source"]
 
+    store.save_explanation(run_id, cards)
     return cards
 
 

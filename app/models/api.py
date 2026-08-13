@@ -283,3 +283,7 @@ class ExportBundle(BaseModel):
     validation_result: ValidationResult
     decisions: list[Decision]
     trace_events: list[TraceEvent]
+    # The sentences the operator was reading when they decided, not a fresh set
+    # worded differently. Null when the screen never asked for one, which is
+    # honest: nothing was shown, so nothing is recorded as shown.
+    explanation: dict | None = None

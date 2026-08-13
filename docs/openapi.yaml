@@ -173,6 +173,13 @@ paths:
         Sentences over an already-decided run. Cards naming an order, id or
         reason the run does not contain, or making a claim 08 §8 forbids, are
         replaced by their template and listed in replaced_reasons.
+
+
+        Generated once and stored against the run, which is immutable once
+        solved. Generating per read put two model calls in front of every render
+        and let the wording drift between views of the same plan. The
+        alternative search moves an order's alternative axis, so it clears the
+        stored copy and the next read rebuilds it.
       parameters: [{$ref: '#/components/parameters/RunId'}]
       responses:
         '200': {description: Explanation cards, content: {application/json: {schema: {$ref: '#/components/schemas/ExplanationResult'}}}}
@@ -652,6 +659,14 @@ components:
         validation_result: {$ref: '#/components/schemas/ValidationResult'}
         decisions: {type: array, items: {$ref: '#/components/schemas/Decision'}}
         trace_events: {type: array, items: {$ref: '#/components/schemas/TraceEvent'}}
+        explanation:
+          description: >-
+            The stored explanation for this run — the sentences the operator was
+            reading when they decided, not a fresh set worded differently. Null
+            when no screen ever asked for one.
+          oneOf:
+            - {$ref: '#/components/schemas/ExplanationResult'}
+            - {type: 'null'}
     TraceEvent:
       type: object
       required: [event_id, event_type, occurred_at, payload]
