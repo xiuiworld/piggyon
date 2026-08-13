@@ -109,15 +109,28 @@ Anthropic Claude SDK도 함께 설치해 두었으나 이번 구현에서는 사
 6. 판단이 애매한 해석은 assumptions_flagged에 기록한다.
 
 [Input]
-as_of: 2026-08-16T18:00:00+09:00
-terminals: [TRM-A(인천 합류), TRM-B(부산 도착), TRM-C(대전 대체)]
-compatibility_tags: [TRAILER_STANDARD, TRAILER_TALL]
-priority_class: [P1, P2, P3]
+{
+  "as_of": "2026-08-16T18:00:00+09:00",
+  "terminal_ids": [
+    {"id": "TRM-A", "name": "합류 터미널 A"},
+    {"id": "TRM-B", "name": "도착 터미널 B"},
+    {"id": "TRM-C", "name": "대체 터미널 C"}
+  ],
+  "shipper_ids": [{"id": "SHP-01", "name": "화주 A"}, ...],
+  "compatibility_tags": ["TRAILER_STANDARD", "TRAILER_TALL"],
+  "priority_class": ["P1", "P2", "P3"]
+}
 document: <의뢰서 원문>
 
 [Output]
 response_format = json_schema (OrderDraft 스키마 강제)
 ```
+
+**ID와 이름은 반드시 분리한 필드로 준다.** `TRM-A (합류 터미널 A)`처럼 한 문자열로
+합쳐 주면 모델이 그 형태 그대로 돌려주고, `TRM-A (합류 터미널 A)`는 유효한 ID가
+아니므로 서버의 폐쇄형 검사에서 전부 탈락한다. 실제로 이 형식 때문에 의뢰서에
+명시된 터미널이 전부 `null`로 떨어진 적이 있다. 서버는 방어적으로 `ID (이름)` 형태가
+들어와도 앞의 ID만 잘라 복구한다.
 
 ### 4.3 설명 프롬프트 구조
 
@@ -127,12 +140,25 @@ response_format = json_schema (OrderDraft 스키마 강제)
 규칙:
 1. 입력 JSON에 있는 사실만 사용한다. 새 수치·확률·원인을 만들지 않는다.
 2. 주문 ID와 사유 코드는 입력 값 그대로 인용한다.
-3. 2~3문장으로 쓴다. 무엇이 안 됐는지, 왜인지, 무엇을 바꾸면 되는지 순서로 쓴다.
-4. 실제 운행 가능성, 비용·탄소 절감을 주장하지 않는다.
+3. headline은 20자 이내, detail은 1~2문장으로 쓴다.
+4. 실제 운행 가능성, 비용·탄소 절감, 확률·보장을 주장하지 않는다.
+5. 슬롯·운행·터미널·수치를 새로 만들지 않는다.
 
 [Input]
-검증 통과한 explanation_bundle (주문 상태 4축, primary_reason_code, 대안 결과)
+검증 통과한 explanation_bundle:
+  assignments + order_outcomes(주문 상태 4축 + primary_reason_code)
+요청한 order_id 목록과 개수를 명시한다.
+
+[Output]
+response_format = json_schema ({"cards": [{order_id, headline, detail}]})
 ```
+
+카드 수를 명시하지 않으면 모델이 일부 주문만 반환한다. 실제로 9건 중 3건만 돌아와
+나머지가 조용히 템플릿으로 대체된 적이 있다. `max_tokens`도 주문 수에 비례해 잡는다
+— 잘린 응답은 유효한 JSON이 아니라서 전량 폐기된다.
+
+표시 라벨(`display_label`)과 배지(`display_badges`)는 **생성 대상이 아니다.** 02 §4
+규칙으로 서버가 계산해 카드에 붙인다. 모델이 상태를 바꿔 쓸 여지를 두지 않는다.
 
 ## 5. 입력값
 
@@ -206,20 +232,23 @@ response_format = json_schema (OrderDraft 스키마 강제)
 입력(검증된 결과):
 
 ```json
-{"order_id": "ORD-004", "eligibility_state": "ELIGIBLE", "assignment_state": "UNASSIGNED",
- "primary_reason_code": "CAPACITY_CONFLICT", "alternative_state": "AVAILABLE",
- "alternative": {"type": "ADD_ORDER_APPROVED_SERVICE", "service_id": "SVC-NEXT-01"}}
+{"order_id": "ORD-005", "eligibility_state": "INELIGIBLE", "assignment_state": "NOT_APPLICABLE",
+ "primary_reason_code": "READY_AFTER_CUTOFF", "alternative_state": "AVAILABLE"}
 ```
 
 출력 문장:
 
 ```text
-ORD-004는 시간·규격·중량 조건을 모두 만족하지만, 이번 운행의 슬롯 3개가 우선순위가 높은
-주문에 배정되어 선택되지 않았습니다(CAPACITY_CONFLICT). 승인된 다음 운행 SVC-NEXT-01을
-추가하면 배정 가능한 대안이 있습니다.
+ORD-005는 준비 시각이 이 운행의 반입 마감 이후라 기본안에 넣을 수 없습니다
+(READY_AFTER_CUTOFF). 승인된 다음 운행을 적용하면 배정 가능한 대안이 있습니다.
 ```
 
-이 문장의 모든 사실(주문 ID, 사유 코드, 대안 운행 ID)은 입력 JSON에 있는 값이다. 문장 생성 후 서버가 이를 대조한다.
+이 문장의 모든 사실(주문 ID, 사유 코드, 상태)은 입력 JSON에 있는 값이다. 문장 생성 후 서버가 이를 대조한다.
+
+> 대안이 있는 주문으로 `ORD-005`를 쓴다. 정본 fixture의 `ORD-004`는
+> `adjustment_window`가 `null`이라 **대안이 존재할 수 없고**, `alternative_state`는
+> 영구히 `NOT_SEARCHED`다. `ORD-004`는 "불가가 아니라 슬롯 경합으로 미선택"
+> 장면(08 장면 3)에 쓰고, 대안 장면(장면 4)에는 `ORD-005`·`ORD-008`을 쓴다.
 
 ## 8. PPT 슬라이드 구성 제안
 

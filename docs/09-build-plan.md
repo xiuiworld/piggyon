@@ -42,7 +42,10 @@
 - 게이트(`POST /scenarios/{id}/runs`):
   - `ORD-001·002·003` 배정(SLT-AM-01~03), `ORD-004` = UNASSIGNED + CAPACITY_CONFLICT
   - `expected-results.baseline.assignments`와 일치
-- 주의: `result_sha256` 등 고정 해시는 임의값이다. **해시 매칭은 스코프에서 뺀다.** 필요하면 엔진 출력으로 fixture를 갱신한다.
+- 재현성: `expected-results.json`의 해시 3개는 **실제 값이며 그대로 재현된다.** 임의값이 아니므로 fixture를 갱신하지 않고, 게이트로 대조한다.
+  - `input_snapshot_sha256`은 **제출된 그대로의** 스냅샷을 덮는다. 파싱된 모델을 다시 직렬화하면 서버 기본값(`intake_cutoff_minutes: null`, 빈 `alternative_destination_terminal_ids`)이 끼어들어 값이 달라진다.
+  - `result_sha256`의 `order_outcomes`는 5개 상태축만 넣는다. `evidence`·`next_actions`는 제외한다.
+  - 정규화 규칙의 정본은 `07 §8`이다.
 
 ## 4. P3 — 조건부 대안
 

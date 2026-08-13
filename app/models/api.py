@@ -209,7 +209,11 @@ class TraceEvent(BaseModel):
 
 class ExportBundle(BaseModel):
     scenario: Scenario
-    input_snapshot: ScenarioInputSnapshot
+    # The stored document verbatim, not a re-serialisation of the parsed model.
+    # 04 §11 calls this the original input snapshot, and it is what the run's
+    # `input_snapshot_sha256` was taken over; round-tripping it through the
+    # model would re-add this service's defaults and no longer hash to that.
+    input_snapshot: dict
     policy: dict
     run: Run
     validation_result: ValidationResult
