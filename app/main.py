@@ -16,7 +16,7 @@ from fastapi.openapi.utils import get_openapi
 
 from app.config import get_settings
 from app.errors import ApiError, api_error_handler, validation_error_handler
-from app.routers import runs, scenarios
+from app.routers import ai, runs, scenarios
 from app.storage import build_store
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
@@ -53,6 +53,7 @@ app.add_exception_handler(RequestValidationError, validation_error_handler)
 
 app.include_router(scenarios.router)
 app.include_router(runs.router)
+app.include_router(ai.router)
 
 
 def custom_openapi() -> dict:

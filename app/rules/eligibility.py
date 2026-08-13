@@ -85,18 +85,29 @@ class _Index:
 def evaluate_scenario(
     snapshot: ScenarioInputSnapshot,
     service_ids: list[str] | None = None,
+    service_ids_by_order: dict[str, list[str]] | None = None,
 ) -> ScenarioEvaluation:
-    """Evaluate every order against the baseline services.
+    """Evaluate every order against the services it is allowed to use.
 
-    `service_ids` overrides the baseline set; P3 uses it to score a derived
-    scenario without mutating the snapshot's own baseline.
+    `service_ids` overrides the baseline set for every order.
+    `service_ids_by_order` narrows it for named orders only, which is what an
+    alternative needs: `ADD_ORDER_APPROVED_SERVICE` opens the extra service to
+    the requesting order alone. Widening the baseline globally would let
+    unrelated orders grab the new slots and the derived plan would report them
+    as impacted (the canonical ORD-005 alternative impacts exactly one order).
     """
     index = _Index(snapshot)
-    target_service_ids = list(service_ids or snapshot.baseline_service_ids)
+    default_service_ids = list(service_ids or snapshot.baseline_service_ids)
+    per_order = service_ids_by_order or {}
 
     return ScenarioEvaluation(
         evaluations=[
-            _evaluate_order(order, snapshot, index, target_service_ids)
+            _evaluate_order(
+                order,
+                snapshot,
+                index,
+                per_order.get(order.order_id, default_service_ids),
+            )
             for order in snapshot.orders
         ]
     )

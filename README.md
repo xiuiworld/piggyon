@@ -31,19 +31,19 @@ python -m pytest tests/ -v
 python scripts/smoke.py
 ```
 
-## 현재 구현 범위 — P2까지
+## 현재 구현 범위
 
 | 페이즈 | 상태 |
 | --- | --- |
 | P0 뼈대 (스캐폴드 · 스냅샷 모델 · `POST /scenarios`) | 완료 |
 | P1 입력 검증 + 적합성 게이트 | 완료 |
 | P2 기본 편성 (CP-SAT) + 독립 검증기 | 완료 |
-| P3 조건부 대안 | 미착수 |
-| P4 생성형 AI 레이어 | 미착수 |
-| P5 결정 · 저장 · 조회 | 미착수 |
-| P6 통합 · 데모 하드닝 | 미착수 |
+| P3 조건부 대안 | 완료 |
+| P4 생성형 AI 레이어 (인테이크 + 설명) | 완료 (키 없이도 동작) |
+| P5 결정 · 저장 · 조회 · export | 완료 |
+| P6 통합 · 배포 | 코드 완료, 배포는 자격증명 대기 |
 
-### 지금 살아 있는 엔드포인트
+### 엔드포인트
 
 | 메서드·경로 | 응답 |
 | --- | --- |
@@ -51,6 +51,12 @@ python scripts/smoke.py
 | `POST /v1/scenarios/{id}/validate` | 주문별 `input_state`·`eligibility_state`·사유·후보 슬롯 |
 | `POST /v1/scenarios/{id}/runs` | `201` + 배정, 주문 결과, 재현성 해시 |
 | `GET /v1/runs/{id}` | 저장된 실행 결과 |
+| `POST /v1/runs/{id}/alternatives` | `201` 대안 + `assignment_deltas` / `200` 대안 없음 / `409` 금지 변경 |
+| `POST /v1/runs/{id}/decisions` | `201` 결정 기록 (`ACCEPTED`는 `OPTIMAL`+`PASS`만) |
+| `GET /v1/runs/{id}/export` | 입력·정책·결과·검증·결정·trace 한 묶음 |
+| `POST /v1/intake/orders` | 비정형 의뢰서 → 주문 초안 + 누락 필드 |
+| `GET /v1/runs/{id}/explanation` | 운영자용 상태 카드 |
+| `GET /v1/ai/status` | 생성형 레이어 사용 가능 여부 |
 | `GET /health` | 저장소 백엔드와 도달 가능 여부 |
 
 실패 응답은 모두 `code`·`message`·`details`·`trace_id`를 가진다. 스키마 위반은
@@ -66,6 +72,9 @@ python scripts/smoke.py
 2. **운행 단계에서 탈락하면 슬롯 단계를 보지 않는다.** 계속 내려가면 `ORD-007`에
    `SLOT_HEIGHT_EXCEEDED`가 붙고, 같은 `DIMENSION_` 계열 안의 사전순 동률 규칙에서
    기대값 `TUNNEL_HEIGHT_EXCEEDED`를 이겨버린다.
+3. **승인된 운행은 요청 주문에만 열어 준다.** 파생 시나리오에서 `baseline_service_ids`를
+   전역으로 넓히면 `ORD-004`가 `SLT-NEXT-01`을 가져가 영향 주문이 하나 더 생긴다.
+   정본은 `ORD-005` 대안의 `impacted_order_ids`가 `["ORD-005"]` 하나다.
 
 납기는 `arrival_at + 도착 터미널 minimum_handling_minutes ≤ due_at`이다(02 §5).
 
@@ -74,6 +83,16 @@ python scripts/smoke.py
 `reproducibility` 해시는 07 §8 정규화로 실제 계산한다. `expected-results.json`의 해시
 값은 임의값이므로(09 §3) 비교 대상이 아니다. 같은 입력·seed 7·worker 1이면 같은
 `result_sha256`이 나오는지만 검증한다.
+
+### 생성형 AI 경계
+
+P4는 판정하지 않는다. 편성은 CP-SAT가 하고, LLM은 이미 검증된 JSON만 받아 문장으로
+바꾼다. 생성된 카드는 서빙 전에 대조한다 — 이 실행에 없는 주문 ID나 사유 코드를
+언급하거나, 08 §8이 금지한 주장(확률·% ·비용 절감·탄소·보장·실제 운행 가능)을 하면
+템플릿 카드로 교체한다. 표시 라벨과 배지는 항상 계산값이고 생성 대상이 아니다.
+
+`OPENAI_API_KEY`가 없으면 규칙 기반 추출과 템플릿 문장으로 내려간다. 05 §5가
+요구하는 대로 키 없이도 데모 전체가 돈다.
 
 ## 구조
 
@@ -95,13 +114,21 @@ app/
     baseline.py      P2 CP-SAT 사전순 다단 목적함수
   validation/
     plan_validator.py 솔버와 독립된 재검산 (05 §3)
+  ai/
+    client.py        OpenAI 호출 (없으면 None 반환)
+    intake.py        P4(a) 비정형 의뢰서 구조화
+    explain.py       P4(b) 설명 카드 + 사실 대조 가드
   services/
     planning.py      validate/run 오케스트레이션
+    alternatives.py  P3 파생 시나리오·change_set·deltas
   routers/
     scenarios.py     POST /v1/scenarios, /validate, /runs
-    runs.py          GET /v1/runs/{id}
+    runs.py          GET /runs/{id}, alternatives, decisions, export
+    ai.py            intake, explanation, ai/status
 data/canonical-v1/   당일 레포에서 재작성한 정본 입력
-scripts/smoke.py     P0~P2 게이트 확인
+data/samples/        데모용 비정형 의뢰서 샘플
+supabase/migrations/ Postgres 스키마
+scripts/smoke.py     데모 5장면 게이트 확인
 tests/               pytest
 ```
 

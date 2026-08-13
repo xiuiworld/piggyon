@@ -22,6 +22,11 @@ logger = logging.getLogger(__name__)
 
 SCENARIOS_TABLE = "scenarios"
 RUNS_TABLE = "runs"
+DECISIONS_TABLE = "decisions"
+TRACE_TABLE = "trace_events"
+
+# Enough history for a demo instance; ids are only scanned to resume numbering.
+_SEQUENCE_SCAN_LIMIT = 200
 
 
 class ScenarioRecord(dict):
@@ -52,6 +57,16 @@ class Store(Protocol):
 
     def get_run(self, run_id: str) -> dict[str, Any] | None: ...
 
+    def next_alternative_sequence(self) -> int: ...
+
+    def save_decision(self, record: dict[str, Any]) -> None: ...
+
+    def list_decisions(self, run_id: str) -> list[dict[str, Any]]: ...
+
+    def append_trace(self, scenario_id: str, event: dict[str, Any]) -> None: ...
+
+    def list_trace(self, scenario_id: str) -> list[dict[str, Any]]: ...
+
 
 class MemoryStore:
     backend_name = "memory"
@@ -61,8 +76,11 @@ class MemoryStore:
         self._scenarios: dict[str, dict[str, Any]] = {}
         self._validations: dict[str, dict[str, Any]] = {}
         self._runs: dict[str, dict[str, Any]] = {}
+        self._decisions: dict[str, list[dict[str, Any]]] = {}
+        self._trace: dict[str, list[dict[str, Any]]] = {}
         self._scenario_seq = 0
         self._run_seq = 0
+        self._alternative_seq = 0
 
     def ping(self) -> bool:
         return True
@@ -107,12 +125,39 @@ class MemoryStore:
         with self._lock:
             return self._runs.get(run_id)
 
+    def next_alternative_sequence(self) -> int:
+        with self._lock:
+            self._alternative_seq += 1
+            return self._alternative_seq
+
+    def save_decision(self, record: dict[str, Any]) -> None:
+        with self._lock:
+            self._decisions.setdefault(record["run_id"], []).append(record)
+
+    def list_decisions(self, run_id: str) -> list[dict[str, Any]]:
+        with self._lock:
+            return list(self._decisions.get(run_id, []))
+
+    def append_trace(self, scenario_id: str, event: dict[str, Any]) -> None:
+        with self._lock:
+            self._trace.setdefault(scenario_id, []).append(event)
+
+    def list_trace(self, scenario_id: str) -> list[dict[str, Any]]:
+        with self._lock:
+            return list(self._trace.get(scenario_id, []))
+
 
 class SupabaseStore:
     """Supabase-backed store.
 
-    Scenario IDs stay monotonic per process; the row itself is the source of
-    truth, so a restart continues from the highest stored ID.
+    Each row keeps its full record in a `document` JSONB column, with only the
+    few fields worth querying promoted to real columns. Records grow every
+    phase; a column per field would mean a migration per phase and a runtime
+    error whenever the two drifted apart.
+
+    Writes are upserts, because a record is legitimately re-saved: recording an
+    alternative writes the baseline run back with its `alternative_state`
+    updated.
     """
 
     backend_name = "supabase"
@@ -124,6 +169,7 @@ class SupabaseStore:
         self._lock = threading.Lock()
         self._scenario_seq: int | None = None
         self._run_seq: int | None = None
+        self._alternative_seq: int | None = None
 
     def ping(self) -> bool:
         try:
@@ -133,50 +179,35 @@ class SupabaseStore:
             logger.warning("supabase ping failed: %s", exc)
             return False
 
+    # --- scenarios ---------------------------------------------------------
+
     def next_scenario_id(self) -> str:
         with self._lock:
             if self._scenario_seq is None:
-                self._scenario_seq = self._highest_stored_sequence()
+                self._scenario_seq = self._highest_sequence(SCENARIOS_TABLE, "scenario_id", "SCN-")
             self._scenario_seq += 1
             return f"SCN-{self._scenario_seq:03d}"
 
-    def _highest_stored_sequence(self) -> int:
-        try:
-            response = (
-                self._client.table(SCENARIOS_TABLE)
-                .select("scenario_id")
-                .order("scenario_id", desc=True)
-                .limit(1)
-                .execute()
-            )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("could not read last scenario_id, starting at 0: %s", exc)
-            return 0
-        rows = response.data or []
-        if not rows:
-            return 0
-        last = str(rows[0].get("scenario_id", ""))
-        _, _, digits = last.rpartition("-")
-        return int(digits) if digits.isdigit() else 0
-
     def save_scenario(self, record: dict[str, Any]) -> None:
-        self._client.table(SCENARIOS_TABLE).insert(record).execute()
+        self._client.table(SCENARIOS_TABLE).upsert(
+            {
+                "scenario_id": record["scenario_id"],
+                "state": record["state"],
+                "created_at": record["created_at"],
+                "document": record,
+            }
+        ).execute()
 
     def get_scenario(self, scenario_id: str) -> dict[str, Any] | None:
-        response = (
-            self._client.table(SCENARIOS_TABLE)
-            .select("*")
-            .eq("scenario_id", scenario_id)
-            .limit(1)
-            .execute()
-        )
-        rows = response.data or []
-        return rows[0] if rows else None
+        row = self._one(SCENARIOS_TABLE, "scenario_id", scenario_id)
+        return row.get("document") if row else None
 
     def update_scenario_state(self, scenario_id: str, state: str) -> None:
-        self._client.table(SCENARIOS_TABLE).update({"state": state}).eq(
-            "scenario_id", scenario_id
-        ).execute()
+        record = self.get_scenario(scenario_id)
+        if record is None:
+            return
+        record["state"] = state
+        self.save_scenario(record)
 
     def save_validation(self, scenario_id: str, result: dict[str, Any]) -> None:
         self._client.table(SCENARIOS_TABLE).update({"validation_result": result}).eq(
@@ -184,54 +215,125 @@ class SupabaseStore:
         ).execute()
 
     def get_validation(self, scenario_id: str) -> dict[str, Any] | None:
-        response = (
-            self._client.table(SCENARIOS_TABLE)
-            .select("validation_result")
-            .eq("scenario_id", scenario_id)
-            .limit(1)
-            .execute()
-        )
-        rows = response.data or []
-        return rows[0].get("validation_result") if rows else None
+        row = self._one(SCENARIOS_TABLE, "scenario_id", scenario_id, "validation_result")
+        return row.get("validation_result") if row else None
+
+    # --- runs --------------------------------------------------------------
 
     def next_run_id(self) -> str:
         with self._lock:
             if self._run_seq is None:
-                self._run_seq = self._highest_run_sequence()
+                self._run_seq = self._highest_sequence(RUNS_TABLE, "run_id", "RUN-")
             self._run_seq += 1
             return f"RUN-{self._run_seq:03d}"
 
-    def _highest_run_sequence(self) -> int:
-        try:
-            response = (
-                self._client.table(RUNS_TABLE)
-                .select("run_id")
-                .order("run_id", desc=True)
-                .limit(1)
-                .execute()
-            )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("could not read last run_id, starting at 0: %s", exc)
-            return 0
-        rows = response.data or []
-        if not rows:
-            return 0
-        _, _, digits = str(rows[0].get("run_id", "")).rpartition("-")
-        return int(digits) if digits.isdigit() else 0
-
     def save_run(self, record: dict[str, Any]) -> None:
-        self._client.table(RUNS_TABLE).insert(record).execute()
+        self._client.table(RUNS_TABLE).upsert(
+            {
+                "run_id": record["run_id"],
+                "scenario_id": record["scenario_id"],
+                "solver_status": record["solver_status"],
+                "validator_status": record["validator_status"],
+                "created_at": record.get("created_at"),
+                "document": record,
+            }
+        ).execute()
 
     def get_run(self, run_id: str) -> dict[str, Any] | None:
+        row = self._one(RUNS_TABLE, "run_id", run_id)
+        return row.get("document") if row else None
+
+    def next_alternative_sequence(self) -> int:
+        with self._lock:
+            if self._alternative_seq is None:
+                self._alternative_seq = self._highest_sequence(RUNS_TABLE, "run_id", "RUN-ALT-")
+            self._alternative_seq += 1
+            return self._alternative_seq
+
+    # --- decisions and trace ------------------------------------------------
+
+    def save_decision(self, record: dict[str, Any]) -> None:
+        self._client.table(DECISIONS_TABLE).upsert(
+            {
+                "decision_id": record["decision_id"],
+                "run_id": record["run_id"],
+                "decision_state": record["decision_state"],
+                "created_at": record["created_at"],
+                "document": record,
+            }
+        ).execute()
+
+    def list_decisions(self, run_id: str) -> list[dict[str, Any]]:
         response = (
-            self._client.table(RUNS_TABLE)
-            .select("*")
+            self._client.table(DECISIONS_TABLE)
+            .select("document")
             .eq("run_id", run_id)
-            .limit(1)
+            .order("created_at")
             .execute()
+        )
+        return [row["document"] for row in (response.data or [])]
+
+    def append_trace(self, scenario_id: str, event: dict[str, Any]) -> None:
+        self._client.table(TRACE_TABLE).insert(
+            {
+                "event_id": event["event_id"],
+                "scenario_id": scenario_id,
+                "event_type": event["event_type"],
+                "occurred_at": event["occurred_at"],
+                "document": event,
+            }
+        ).execute()
+
+    def list_trace(self, scenario_id: str) -> list[dict[str, Any]]:
+        response = (
+            self._client.table(TRACE_TABLE)
+            .select("document")
+            .eq("scenario_id", scenario_id)
+            .order("occurred_at")
+            .execute()
+        )
+        return [row["document"] for row in (response.data or [])]
+
+    # --- helpers -----------------------------------------------------------
+
+    def _one(
+        self, table: str, key: str, value: str, columns: str = "*"
+    ) -> dict[str, Any] | None:
+        response = (
+            self._client.table(table).select(columns).eq(key, value).limit(1).execute()
         )
         rows = response.data or []
         return rows[0] if rows else None
+
+    def _highest_sequence(self, table: str, column: str, prefix: str) -> int:
+        """Continue numbering after a restart instead of colliding with old ids.
+
+        Filtering happens here rather than in the query because the ids share
+        a namespace: `RUN-ALT-003` sorts above `RUN-001`, so asking the
+        database for the largest `RUN-%` would hand baseline numbering an
+        alternative's counter. Only an exact `prefix + digits` match counts.
+        """
+        try:
+            response = (
+                self._client.table(table)
+                .select(column)
+                .order(column, desc=True)
+                .limit(_SEQUENCE_SCAN_LIMIT)
+                .execute()
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("could not read last %s, starting at 0: %s", column, exc)
+            return 0
+
+        highest = 0
+        for row in response.data or []:
+            value = str(row.get(column, ""))
+            if not value.startswith(prefix):
+                continue
+            suffix = value[len(prefix):]
+            if suffix.isdigit():
+                highest = max(highest, int(suffix))
+        return highest
 
 
 def build_store(settings: Settings | None = None) -> Store:

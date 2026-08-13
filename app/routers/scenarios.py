@@ -55,6 +55,7 @@ def create_scenario(
     store.save_scenario(record)
 
     response.headers["Location"] = f"/v1/scenarios/{scenario_id}"
+    _trace(store, scenario_id, "SCENARIO_CREATED", {"scenario_name": payload.scenario_name})
     return Scenario(
         scenario_id=scenario_id, state="VALIDATION_REQUIRED", created_at=created_at
     )
@@ -81,6 +82,13 @@ def validate_scenario(
     # block the scenario. Only a scenario with nothing left to compute stays put.
     if evaluation.has_any_candidate:
         store.update_scenario_state(scenario_id, "READY_TO_SOLVE")
+    _trace(
+        store,
+        scenario_id,
+        "VALIDATION_COMPLETED",
+        {"review_required": [o.order_id for o in evaluation.evaluations
+                             if o.input_state == "REVIEW_REQUIRED"]},
+    )
 
     return ValidationResult.model_validate(result)
 
@@ -136,9 +144,33 @@ def create_run(
     record["created_at"] = utc_now().isoformat()
     store.save_run(record)
     store.update_scenario_state(scenario_id, "SOLVED")
+    _trace(
+        store,
+        scenario_id,
+        "RUN_COMPLETED",
+        {
+            "run_id": record["run_id"],
+            "solver_status": record["solver_status"],
+            "validator_status": record["validator_status"],
+        },
+    )
 
     response.headers["Location"] = f"/v1/runs/{record['run_id']}"
     return Run.model_validate(record)
+
+
+def _trace(store: Store, scenario_id: str, event_type: str, payload: dict) -> None:
+    import uuid
+
+    store.append_trace(
+        scenario_id,
+        {
+            "event_id": f"EVT-{uuid.uuid4().hex[:12]}",
+            "event_type": event_type,
+            "occurred_at": utc_now().isoformat(),
+            "payload": payload,
+        },
+    )
 
 
 def _require_scenario(store: Store, scenario_id: str) -> dict:

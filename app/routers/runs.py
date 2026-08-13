@@ -1,13 +1,33 @@
-"""`GET /v1/runs/{run_id}` — read back a solved plan."""
+"""Run-scoped endpoints: read, alternatives, decisions, export."""
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+import uuid
+from typing import Any
+
+from fastapi import APIRouter, Depends, Response, status
+from fastapi.responses import JSONResponse
 
 from app.dependencies import get_store
 from app.errors import ApiError
-from app.models.api import ErrorResponse, Run
-from app.storage import Store
+from app.models.api import (
+    AlternativeRequest,
+    AlternativeResult,
+    AlternativeUnavailableResult,
+    Decision,
+    DecisionRequest,
+    ErrorResponse,
+    ExportBundle,
+    Run,
+)
+from app.services.alternatives import (
+    PolicyViolation,
+    apply_to_baseline,
+    search_alternative,
+)
+from app.services.planning import snapshot_of
+from app.solver.baseline import SolverParameters
+from app.storage import Store, utc_now
 
 router = APIRouter(prefix="/v1/runs", tags=["runs"])
 
@@ -19,7 +39,239 @@ router = APIRouter(prefix="/v1/runs", tags=["runs"])
     responses={404: {"model": ErrorResponse, "description": "Run not found"}},
 )
 def get_run(run_id: str, store: Store = Depends(get_store)) -> Run:
-    record = store.get_run(run_id)
-    if record is None:
+    return Run.model_validate(_require_run(store, run_id))
+
+
+@router.post(
+    "/{run_id}/alternatives",
+    summary="Search the approved alternatives for one order",
+    response_model=None,
+    responses={
+        201: {"model": AlternativeResult, "description": "Alternative found"},
+        200: {
+            "model": AlternativeUnavailableResult,
+            "description": "Permitted alternatives were searched but none is feasible",
+        },
+        400: {"model": ErrorResponse, "description": "Invalid input"},
+        404: {"model": ErrorResponse, "description": "Run not found"},
+        409: {"model": ErrorResponse, "description": "Requested change is forbidden"},
+    },
+)
+def create_alternative(
+    run_id: str,
+    payload: AlternativeRequest,
+    response: Response,
+    store: Store = Depends(get_store),
+):
+    baseline_run = _require_run(store, run_id)
+    scenario = store.get_scenario(baseline_run["scenario_id"])
+    if scenario is None:
+        raise ApiError(
+            "SCENARIO_NOT_FOUND", f"Scenario {baseline_run['scenario_id']} does not exist."
+        )
+
+    snapshot = snapshot_of(scenario)
+    if not any(o.order_id == payload.order_id for o in snapshot.orders):
+        raise ApiError(
+            "INVALID_INPUT",
+            f"Order {payload.order_id} is not part of this scenario.",
+            details=[{"location": "order_id", "message": "unknown order"}],
+        )
+
+    sequence = store.next_alternative_sequence()
+    parameters = SolverParameters(
+        **baseline_run["reproducibility"]["solver_parameters"]
+    )
+
+    try:
+        outcome = search_alternative(
+            snapshot=snapshot,
+            baseline_run=baseline_run,
+            order_id=payload.order_id,
+            adjustment_types=list(payload.adjustment_types),
+            scenario_id=f"SCN-ALT-{sequence:03d}",
+            run_id=f"RUN-ALT-{sequence:03d}",
+            parameters=parameters,
+        )
+    except PolicyViolation as exc:
+        # TC-10: the refusal must not disturb whatever the order already had.
+        raise ApiError(
+            "POLICY_VIOLATION",
+            "Requested adjustment is forbidden by the scenario policy.",
+            details=[{"adjustment_type": t} for t in exc.forbidden],
+        ) from exc
+
+    if not outcome.found:
+        baseline_update = apply_to_baseline(baseline_run, payload.order_id, "NONE")
+        store.save_run(baseline_run)
+        _trace(store, baseline_run["scenario_id"], "ALTERNATIVE_CREATED", {
+            "run_id": run_id,
+            "order_id": payload.order_id,
+            "status": "NO_FEASIBLE_ALTERNATIVE",
+            "reason_code": outcome.reason_code,
+        })
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content=AlternativeUnavailableResult(
+                order_id=payload.order_id,
+                alternative_state="NONE",
+                status="NO_FEASIBLE_ALTERNATIVE",
+                change_set=outcome.change_set,
+                baseline_order_update=baseline_update,
+                reason_code=outcome.reason_code or "NO_FEASIBLE_ALTERNATIVE",
+            ).model_dump(mode="json"),
+        )
+
+    store.save_scenario(
+        {
+            "scenario_id": outcome.alternative_scenario_id,
+            "scenario_name": f"{scenario['scenario_name']}-alt-{payload.order_id}",
+            "state": "SOLVED",
+            "created_at": utc_now().isoformat(),
+            "as_of": scenario["as_of"],
+            "baseline_service_ids": outcome.alternative_snapshot.baseline_service_ids,
+            "policy_version": scenario["policy_version"],
+            "assumption_ids": scenario["assumption_ids"],
+            "input_snapshot": outcome.alternative_snapshot.model_dump(mode="json"),
+            "parent_scenario_id": scenario["scenario_id"],
+            "change_set": outcome.change_set,
+        }
+    )
+    store.save_run(outcome.alternative_run)
+
+    baseline_update = apply_to_baseline(
+        baseline_run, payload.order_id, "AVAILABLE", outcome.alternative_scenario_id
+    )
+    store.save_run(baseline_run)
+    _trace(store, baseline_run["scenario_id"], "ALTERNATIVE_CREATED", {
+        "run_id": run_id,
+        "order_id": payload.order_id,
+        "alternative_run_id": outcome.alternative_run_id,
+        "change_set": outcome.change_set,
+    })
+
+    response.status_code = status.HTTP_201_CREATED
+    response.headers["Location"] = f"/v1/runs/{outcome.alternative_run_id}"
+    return AlternativeResult(
+        parent_run_id=run_id,
+        alternative_scenario_id=outcome.alternative_scenario_id,
+        alternative_run_id=outcome.alternative_run_id,
+        change_set=outcome.change_set,
+        impacted_order_ids=outcome.impacted_order_ids,
+        baseline_order_update=baseline_update,
+        alternative_run_order_outcome=outcome.alternative_run_order_outcome,
+        assignment_deltas=outcome.assignment_deltas,
+        validator_status=outcome.validator_status,
+    )
+
+
+@router.post(
+    "/{run_id}/decisions",
+    response_model=Decision,
+    status_code=status.HTTP_201_CREATED,
+    summary="Record the operator decision",
+    responses={
+        404: {"model": ErrorResponse, "description": "Run not found"},
+        409: {"model": ErrorResponse, "description": "Run cannot be accepted"},
+    },
+)
+def create_decision(
+    run_id: str,
+    payload: DecisionRequest,
+    store: Store = Depends(get_store),
+) -> Decision:
+    run = _require_run(store, run_id)
+
+    acceptable = run["solver_status"] == "OPTIMAL" and run["validator_status"] == "PASS"
+    if payload.decision_state == "ACCEPTED" and not acceptable:
+        # 04 §8: a FEASIBLE or FAIL run can be held or rejected, never accepted.
+        raise ApiError(
+            "RUN_NOT_ACCEPTABLE",
+            "Only an OPTIMAL run with validator PASS can be ACCEPTED.",
+            details=[
+                {
+                    "solver_status": run["solver_status"],
+                    "validator_status": run["validator_status"],
+                }
+            ],
+        )
+
+    created_at = utc_now()
+    record = {
+        "decision_id": f"DEC-{uuid.uuid4().hex[:12]}",
+        "run_id": run_id,
+        "decision_state": payload.decision_state,
+        "actor_role": payload.actor_role,
+        "reason": payload.reason,
+        "selected_plan": payload.selected_plan,
+        "created_at": created_at.isoformat(),
+    }
+    store.save_decision(record)
+    _trace(store, run["scenario_id"], "DECISION_RECORDED", {
+        "run_id": run_id,
+        "decision_id": record["decision_id"],
+        "decision_state": payload.decision_state,
+    })
+
+    return Decision.model_validate(record)
+
+
+@router.get(
+    "/{run_id}/export",
+    response_model=ExportBundle,
+    summary="Immutable demo and verification bundle",
+    responses={404: {"model": ErrorResponse, "description": "Run not found"}},
+)
+def export_run(run_id: str, store: Store = Depends(get_store)) -> ExportBundle:
+    run = _require_run(store, run_id)
+    scenario = store.get_scenario(run["scenario_id"])
+    if scenario is None:
+        raise ApiError(
+            "SCENARIO_NOT_FOUND", f"Scenario {run['scenario_id']} does not exist."
+        )
+
+    validation = store.get_validation(run["scenario_id"])
+    if validation is None:
+        # An alternative run is solved directly from its derived scenario, so
+        # it has no standalone validation pass of its own.
+        validation = {
+            "scenario_id": run["scenario_id"],
+            "validation_status": "COMPLETED",
+            "orders": [],
+        }
+
+    snapshot = scenario["input_snapshot"]
+    return ExportBundle.model_validate(
+        {
+            "scenario": {
+                "scenario_id": scenario["scenario_id"],
+                "state": scenario["state"],
+                "created_at": scenario["created_at"],
+            },
+            "input_snapshot": snapshot,
+            "policy": snapshot["policy"],
+            "run": run,
+            "validation_result": validation,
+            "decisions": store.list_decisions(run_id),
+            "trace_events": store.list_trace(run["scenario_id"]),
+        }
+    )
+
+
+def _require_run(store: Store, run_id: str) -> dict[str, Any]:
+    run = store.get_run(run_id)
+    if run is None:
         raise ApiError("RUN_NOT_FOUND", f"Run {run_id} does not exist.")
-    return Run.model_validate(record)
+    return run
+
+
+def _trace(store: Store, scenario_id: str, event_type: str, payload: dict) -> None:
+    store.append_trace(
+        scenario_id,
+        {
+            "event_id": f"EVT-{uuid.uuid4().hex[:12]}",
+            "event_type": event_type,
+            "occurred_at": utc_now().isoformat(),
+            "payload": payload,
+        },
+    )

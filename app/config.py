@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     supabase_key: str = ""
 
     openai_api_key: str = ""
+    # Overridable: if the account cannot reach this model the P4 layer logs and
+    # falls back to templates rather than failing the request.
+    openai_model: str = "gpt-4o-mini"
 
     @property
     def supabase_configured(self) -> bool:

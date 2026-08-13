@@ -121,3 +121,89 @@ class Run(BaseModel):
     reproducibility: Reproducibility
     assignments: list[AssignmentModel]
     order_outcomes: list[OrderOutcomeModel]
+
+
+AdjustmentType = Literal[
+    "ADD_ORDER_APPROVED_SERVICE",
+    "CHANGE_TO_APPROVED_TERMINAL",
+    "CHANGE_WEIGHT_LIMIT",
+    "CHANGE_DIMENSION_LIMIT",
+    "CHANGE_ROUTE_CLEARANCE",
+    "CHANGE_DUE_AT",
+]
+
+
+class AlternativeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    order_id: str
+    # Forbidden types are accepted by the schema on purpose: the 409
+    # POLICY_VIOLATION contract only exists if the request can be expressed.
+    adjustment_types: list[AdjustmentType] = Field(min_length=1)
+
+
+class AssignmentDelta(BaseModel):
+    order_id: str
+    change_type: Literal["ADDED", "MOVED", "UNASSIGNED"]
+    before_assignment: AssignmentModel | None
+    after_assignment: AssignmentModel | None
+
+
+class AlternativeResult(BaseModel):
+    parent_run_id: str
+    alternative_scenario_id: str
+    alternative_run_id: str
+    change_set: list[dict]
+    impacted_order_ids: list[str] = Field(min_length=1)
+    baseline_order_update: OrderOutcomeModel
+    alternative_run_order_outcome: OrderOutcomeModel
+    assignment_deltas: list[AssignmentDelta] = Field(min_length=1)
+    validator_status: Literal["PASS", "FAIL"]
+
+
+class AlternativeUnavailableResult(BaseModel):
+    order_id: str
+    alternative_state: Literal["NONE"]
+    status: Literal["NO_FEASIBLE_ALTERNATIVE"]
+    change_set: list[dict]
+    baseline_order_update: OrderOutcomeModel
+    reason_code: str
+
+
+class DecisionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    decision_state: Literal["ACCEPTED", "HELD", "REJECTED"]
+    actor_role: Literal["SCHEDULING_OPERATOR", "PLANNING_OWNER"]
+    reason: str = Field(min_length=1)
+    selected_plan: Literal["BASELINE", "ALTERNATIVE"]
+
+
+class Decision(BaseModel):
+    decision_id: str
+    run_id: str
+    decision_state: str
+    created_at: datetime
+
+
+class TraceEvent(BaseModel):
+    event_id: str
+    event_type: Literal[
+        "SCENARIO_CREATED",
+        "VALIDATION_COMPLETED",
+        "RUN_COMPLETED",
+        "ALTERNATIVE_CREATED",
+        "DECISION_RECORDED",
+    ]
+    occurred_at: datetime
+    payload: dict
+
+
+class ExportBundle(BaseModel):
+    scenario: Scenario
+    input_snapshot: ScenarioInputSnapshot
+    policy: dict
+    run: Run
+    validation_result: ValidationResult
+    decisions: list[Decision]
+    trace_events: list[TraceEvent]
