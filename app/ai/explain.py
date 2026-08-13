@@ -15,6 +15,15 @@ from app.ai import client
 
 ALTERNATIVE_BADGE = "조건부 대안 있음"
 
+# 02 §4 rules 5-7. One label per alternative_state, because the three say
+# different things to the operator: not looked yet, looked and found (the
+# badge carries that), looked and found nothing.
+INELIGIBLE_LABELS = {
+    "NOT_SEARCHED": "기본안 불가·대안 미검토",
+    "AVAILABLE": "기본안 불가",
+    "NONE": "불가",
+}
+
 REASON_TEXT = {
     "ASSIGNED": "제약을 모두 만족해 슬롯에 배정되었습니다.",
     "CAPACITY_CONFLICT": "제약은 만족하지만 이번 운행의 슬롯이 부족해 선택되지 않았습니다.",
@@ -301,10 +310,21 @@ def _template_card(outcome: dict[str, Any]) -> dict[str, Any]:
 def _display_label(outcome: dict[str, Any]) -> str:
     """02 §4 display rules.
 
-    The INELIGIBLE label depends on whether alternatives have been searched
-    yet: rule 5 (NOT_SEARCHED) reads 기본안 불가·대안 미검토, rule 6 (NONE)
-    reads 불가. Rule 4 keeps the main label untouched when an alternative is
-    AVAILABLE and adds a badge instead, so AVAILABLE falls through to 불가.
+    An INELIGIBLE order has one label per `alternative_state`, never a
+    two-way split with a fallthrough: rule 5 (NOT_SEARCHED) reads 기본안
+    불가·대안 미검토, rule 7 (AVAILABLE) reads 기본안 불가, rule 6 (NONE)
+    reads 불가.
+
+    불가 is rule 6's alone. Letting AVAILABLE fall through to it renders 불가
+    beside rule 4's 조건부 대안 있음 badge — "impossible" and "there is an
+    alternative" on one row — which erases the very distinction 01 §2.4 asks
+    the operator to make. It also rewrites the main state that rule 4 and 02
+    §9.5 forbid the alternative search from touching: before the search the
+    same order reads 기본안 불가·대안 미검토, so finding an alternative would
+    move it *backwards*, from "baseline failed" to "impossible".
+
+    Rule 7 says only what stays true — the baseline cannot carry this order —
+    and leaves the alternative to the badge.
     """
     if outcome["input_state"] == "REVIEW_REQUIRED":
         return "확인 필요"
@@ -313,7 +333,10 @@ def _display_label(outcome: dict[str, Any]) -> str:
     if eligibility == "ELIGIBLE":
         return "편성 가능" if outcome["assignment_state"] == "ASSIGNED" else "편성 가능·미배정"
     if eligibility == "INELIGIBLE":
-        return "기본안 불가·대안 미검토" if outcome["alternative_state"] == "NOT_SEARCHED" else "불가"
+        # An unrecognised state means the search outcome is unknown, which is
+        # what rule 5 already says; 불가 would overclaim it. _badges withholds
+        # the badge on the same values, so label and badge stay in step.
+        return INELIGIBLE_LABELS.get(outcome["alternative_state"], INELIGIBLE_LABELS["NOT_SEARCHED"])
     return "확인 필요"
 
 
