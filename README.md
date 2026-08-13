@@ -95,9 +95,18 @@ python scripts/smoke.py
 
 ### 재현성
 
-`reproducibility` 해시는 07 §8 정규화로 실제 계산한다. `expected-results.json`의 해시
-값은 임의값이므로(09 §3) 비교 대상이 아니다. 같은 입력·seed 7·worker 1이면 같은
-`result_sha256`이 나오는지만 검증한다.
+`reproducibility` 해시 3개는 `expected-results.json`의 값과 **정확히 일치**한다.
+09 §3은 fixture 해시를 임의값이라 하고 해시 매칭을 스코프에서 뺐지만, 실제로는
+셋 다 재현된다. 테스트가 fixture 값과 직접 대조한다.
+
+두 가지가 결과를 가른다:
+
+- **입력 해시는 "제출된 그대로"의 스냅샷을 덮는다.** 파싱된 모델을 다시 직렬화하면
+  이쪽 기본값(`intake_cutoff_minutes: null`, 빈 `alternative_destination_terminal_ids`)이
+  끼어들어 호출자가 보낸 적 없는 문서를 해싱하게 된다. 나중에 선택 필드를 하나
+  추가하면 과거 해시가 전부 조용히 바뀐다는 문제도 있다.
+- **`order_outcomes`는 5개 상태축만 해시에 넣는다.** `evidence`·`next_actions`는
+  결정을 설명하는 표현이지 결정 자체가 아니다.
 
 ### 생성형 AI 경계
 

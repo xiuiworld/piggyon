@@ -15,6 +15,7 @@ from app.hashing import result_sha256, sha256_of
 from app.models.snapshot import ScenarioInputSnapshot
 from app.rules import reason_codes as rc
 from app.rules.eligibility import evaluate_scenario
+from app.services.planning import build_validation_result
 from app.solver.baseline import SolverParameters, solve_baseline
 from app.validation.plan_validator import validate_plan
 
@@ -48,6 +49,7 @@ class AlternativeOutcome:
     assignment_deltas: list[dict[str, Any]] | None = None
     alternative_run_order_outcome: dict[str, Any] | None = None
     validator_status: str = "PASS"
+    alternative_validation: dict[str, Any] | None = None
 
 
 def build_change_set(
@@ -202,6 +204,9 @@ def search_alternative(
         assignment_deltas=deltas,
         alternative_run_order_outcome=target_outcome,
         validator_status=validation.status,
+        # The derived scenario really was validated on the way here, so the
+        # result is recorded rather than invented later at export time.
+        alternative_validation=build_validation_result(scenario_id, evaluation),
     )
 
 
@@ -250,6 +255,9 @@ def apply_to_baseline(
     for outcome in baseline_run.get("order_outcomes", []):
         if outcome["order_id"] == order_id:
             outcome["alternative_state"] = alternative_state
+            outcome["display_badges"] = (
+                ["조건부 대안 있음"] if alternative_state == "AVAILABLE" else []
+            )
             if alternative_scenario_id:
                 outcome["alternative_scenario_id"] = alternative_scenario_id
             return outcome

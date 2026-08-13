@@ -138,6 +138,8 @@ def create_alternative(
         }
     )
     store.save_run(outcome.alternative_run)
+    if outcome.alternative_validation is not None:
+        store.save_validation(outcome.alternative_scenario_id, outcome.alternative_validation)
 
     baseline_update = apply_to_baseline(
         baseline_run, payload.order_id, "AVAILABLE", outcome.alternative_scenario_id
@@ -232,13 +234,13 @@ def export_run(run_id: str, store: Store = Depends(get_store)) -> ExportBundle:
 
     validation = store.get_validation(run["scenario_id"])
     if validation is None:
-        # An alternative run is solved directly from its derived scenario, so
-        # it has no standalone validation pass of its own.
-        validation = {
-            "scenario_id": run["scenario_id"],
-            "validation_status": "COMPLETED",
-            "orders": [],
-        }
+        # Never fabricate a COMPLETED here. Claiming a scenario was validated
+        # when it was not breaks the traceability the bundle exists to provide,
+        # and an empty COMPLETED is indistinguishable from a real clean pass.
+        raise ApiError(
+            "VALIDATION_REQUIRED",
+            f"Scenario {run['scenario_id']} has no recorded validation result.",
+        )
 
     snapshot = scenario["input_snapshot"]
     return ExportBundle.model_validate(

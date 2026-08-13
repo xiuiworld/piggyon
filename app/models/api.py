@@ -102,6 +102,11 @@ class OrderOutcomeModel(BaseModel):
     evidence: dict = Field(default_factory=dict)
     next_actions: list[str] = Field(default_factory=list)
     display_label: str | None = None
+    display_badges: list[str] = Field(default_factory=list)
+    # The link from a baseline order to the derived scenario that can carry it.
+    # Without it on the model, Pydantic drops the value the run record already
+    # holds, and the UI has no resource path to the alternative.
+    alternative_scenario_id: str | None = None
 
 
 class Reproducibility(BaseModel):
@@ -118,6 +123,9 @@ class Run(BaseModel):
     run_state: Literal["SOLVED_OPTIMAL", "SOLVED_FEASIBLE", "MODEL_INFEASIBLE", "ERROR"]
     is_optimal: bool
     validator_status: Literal["PASS", "FAIL"]
+    # A FAIL is only actionable if the UI can say which rule broke and on what
+    # resource, which 08 §9 requires it to show.
+    validator_findings: list[dict] = Field(default_factory=list)
     reproducibility: Reproducibility
     assignments: list[AssignmentModel]
     order_outcomes: list[OrderOutcomeModel]

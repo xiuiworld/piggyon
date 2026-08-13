@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Response, status
+from fastapi import APIRouter, Depends, Request, Response, status
 
 from app.errors import ApiError
 from app.models.api import (
@@ -29,8 +29,9 @@ router = APIRouter(prefix="/v1/scenarios", tags=["scenarios"])
     summary="Create an input snapshot",
     responses={400: {"model": ErrorResponse, "description": "Invalid input"}},
 )
-def create_scenario(
+async def create_scenario(
     payload: ScenarioCreateRequest,
+    request: Request,
     response: Response,
     store: Store = Depends(get_store),
 ) -> Scenario:
@@ -48,9 +49,11 @@ def create_scenario(
         "baseline_service_ids": payload.baseline_service_ids,
         "policy_version": payload.policy_version,
         "assumption_ids": payload.assumption_ids,
-        # Stored in JSON mode so the snapshot round-trips through Postgres
-        # unchanged; later phases hash exactly these bytes for reproducibility.
-        "input_snapshot": payload.input_snapshot.model_dump(mode="json"),
+        # The snapshot is persisted exactly as submitted. `payload` has already
+        # validated it; re-dumping the model would add this service's own
+        # defaults to the caller's document and change its hash, which is
+        # supposed to identify what the caller actually sent.
+        "input_snapshot": (await request.json())["input_snapshot"],
     }
     store.save_scenario(record)
 
@@ -140,6 +143,7 @@ def create_run(
             num_search_workers=payload.solver_parameters.num_search_workers,
             max_time_seconds=payload.solver_parameters.max_time_seconds,
         ),
+        raw_snapshot=scenario["input_snapshot"],
     )
     record["created_at"] = utc_now().isoformat()
     store.save_run(record)

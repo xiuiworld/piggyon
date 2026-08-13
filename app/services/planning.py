@@ -45,7 +45,15 @@ def run_baseline(
     scenario_id: str,
     snapshot: ScenarioInputSnapshot,
     parameters: SolverParameters,
+    raw_snapshot: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    """Solve and package one run.
+
+    `raw_snapshot` is the document as it was submitted. The hashes cover that,
+    not the parsed model, so they identify the caller's input rather than this
+    service's serialisation of it.
+    """
+    hashed = raw_snapshot if raw_snapshot is not None else snapshot.model_dump(mode="json")
     evaluation = evaluate_scenario(snapshot)
     result = solve_baseline(snapshot, evaluation, parameters)
     validation = validate_plan(snapshot, result.assignments, result.order_outcomes)
@@ -63,8 +71,8 @@ def run_baseline(
         "validator_findings": [f.as_dict() for f in validation.findings],
         "reproducibility": {
             "solver_parameters": parameters.as_dict(),
-            "input_snapshot_sha256": sha256_of(snapshot.model_dump(mode="json")),
-            "policy_sha256": sha256_of(snapshot.policy.model_dump(mode="json")),
+            "input_snapshot_sha256": sha256_of(hashed),
+            "policy_sha256": sha256_of(hashed["policy"]),
             "result_sha256": result_sha256(assignments, order_outcomes),
         },
         "assignments": assignments,
