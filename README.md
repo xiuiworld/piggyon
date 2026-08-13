@@ -25,19 +25,19 @@ uvicorn app.main:app --reload --port 8000
 python -m pytest tests/ -v
 ```
 
-P0 게이트를 실행 중인 서버에 대고 확인한다:
+게이트를 실행 중인 서버에 대고 확인한다:
 
 ```bash
-python scripts/smoke_p0.py
+python scripts/smoke.py
 ```
 
-## 현재 구현 범위 — P0
+## 현재 구현 범위 — P2까지
 
 | 페이즈 | 상태 |
 | --- | --- |
 | P0 뼈대 (스캐폴드 · 스냅샷 모델 · `POST /scenarios`) | 완료 |
-| P1 입력 검증 + 적합성 게이트 | 미착수 |
-| P2 기본 편성 (CP-SAT) | 미착수 |
+| P1 입력 검증 + 적합성 게이트 | 완료 |
+| P2 기본 편성 (CP-SAT) + 독립 검증기 | 완료 |
 | P3 조건부 대안 | 미착수 |
 | P4 생성형 AI 레이어 | 미착수 |
 | P5 결정 · 저장 · 조회 | 미착수 |
@@ -48,10 +48,32 @@ python scripts/smoke_p0.py
 | 메서드·경로 | 응답 |
 | --- | --- |
 | `POST /v1/scenarios` | `201` + `scenario_id`, `state=VALIDATION_REQUIRED` |
+| `POST /v1/scenarios/{id}/validate` | 주문별 `input_state`·`eligibility_state`·사유·후보 슬롯 |
+| `POST /v1/scenarios/{id}/runs` | `201` + 배정, 주문 결과, 재현성 해시 |
+| `GET /v1/runs/{id}` | 저장된 실행 결과 |
 | `GET /health` | 저장소 백엔드와 도달 가능 여부 |
 
 실패 응답은 모두 `code`·`message`·`details`·`trace_id`를 가진다. 스키마 위반은
 `400 INVALID_INPUT`이며, `422`는 `VALIDATION_REQUIRED` 전용으로 남겨 둔다.
+
+### 정본 fixture에서 역산한 규칙 두 가지
+
+문서가 두 가지로 읽히는 지점이 있어, `expected-results.json`이 성립하는 쪽으로 고정했다.
+
+1. **반입 마감은 `ready_at ≤ planning_cutoff_at`이다.** 출발지 `minimum_handling_minutes`를
+   더하지 않는다. 더하면 `ORD-008`(10:00 준비, 10:30 마감)이 `READY_AFTER_CUTOFF`가 되고,
+   `TIME_ > TERMINAL_` 우선순위 때문에 기대값 `TERMINAL_NOT_COMPATIBLE`을 덮어쓴다.
+2. **운행 단계에서 탈락하면 슬롯 단계를 보지 않는다.** 계속 내려가면 `ORD-007`에
+   `SLOT_HEIGHT_EXCEEDED`가 붙고, 같은 `DIMENSION_` 계열 안의 사전순 동률 규칙에서
+   기대값 `TUNNEL_HEIGHT_EXCEEDED`를 이겨버린다.
+
+납기는 `arrival_at + 도착 터미널 minimum_handling_minutes ≤ due_at`이다(02 §5).
+
+### 재현성
+
+`reproducibility` 해시는 07 §8 정규화로 실제 계산한다. `expected-results.json`의 해시
+값은 임의값이므로(09 §3) 비교 대상이 아니다. 같은 입력·seed 7·worker 1이면 같은
+`result_sha256`이 나오는지만 검증한다.
 
 ## 구조
 
@@ -62,13 +84,24 @@ app/
   storage.py         Store 프로토콜 + MemoryStore / SupabaseStore
   errors.py          Error 계약 (04 §1, §9)
   canonical.py       정본 시나리오 로더
+  hashing.py         정규화·SHA-256 (07 §8)
   models/
     snapshot.py      ScenarioInputSnapshot (openapi.yaml의 타입 미러)
     api.py           요청·응답 모델
+  rules/
+    reason_codes.py  사유 코드와 primary 선정 규칙 (02 §6)
+    eligibility.py   P1 입력 검증 + 적합성 게이트
+  solver/
+    baseline.py      P2 CP-SAT 사전순 다단 목적함수
+  validation/
+    plan_validator.py 솔버와 독립된 재검산 (05 §3)
+  services/
+    planning.py      validate/run 오케스트레이션
   routers/
-    scenarios.py     POST /v1/scenarios
+    scenarios.py     POST /v1/scenarios, /validate, /runs
+    runs.py          GET /v1/runs/{id}
 data/canonical-v1/   당일 레포에서 재작성한 정본 입력
-scripts/smoke_p0.py  P0 게이트 확인
+scripts/smoke.py     P0~P2 게이트 확인
 tests/               pytest
 ```
 

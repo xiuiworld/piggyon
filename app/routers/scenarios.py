@@ -5,7 +5,17 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Response, status
 
 from app.errors import ApiError
-from app.models.api import ErrorResponse, Scenario, ScenarioCreateRequest
+from app.models.api import (
+    ErrorResponse,
+    Run,
+    RunRequest,
+    Scenario,
+    ScenarioCreateRequest,
+    ValidationResult,
+)
+from app.services.planning import build_validation_result, run_baseline, snapshot_of
+from app.rules.eligibility import evaluate_scenario
+from app.solver.baseline import SolverParameters
 from app.storage import Store, utc_now
 from app.dependencies import get_store
 
@@ -48,6 +58,94 @@ def create_scenario(
     return Scenario(
         scenario_id=scenario_id, state="VALIDATION_REQUIRED", created_at=created_at
     )
+
+
+@router.post(
+    "/{scenario_id}/validate",
+    response_model=ValidationResult,
+    summary="Validate inputs and build slot candidates",
+    responses={404: {"model": ErrorResponse, "description": "Scenario not found"}},
+)
+def validate_scenario(
+    scenario_id: str,
+    store: Store = Depends(get_store),
+) -> ValidationResult:
+    scenario = _require_scenario(store, scenario_id)
+    snapshot = snapshot_of(scenario)
+
+    evaluation = evaluate_scenario(snapshot)
+    result = build_validation_result(scenario_id, evaluation)
+
+    store.save_validation(scenario_id, result)
+    # 02 §9: REVIEW_REQUIRED orders are dropped from the solve, they do not
+    # block the scenario. Only a scenario with nothing left to compute stays put.
+    if evaluation.has_any_candidate:
+        store.update_scenario_state(scenario_id, "READY_TO_SOLVE")
+
+    return ValidationResult.model_validate(result)
+
+
+@router.post(
+    "/{scenario_id}/runs",
+    response_model=Run,
+    status_code=status.HTTP_201_CREATED,
+    summary="Solve the baseline plan",
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid input"},
+        404: {"model": ErrorResponse, "description": "Scenario not found"},
+        422: {"model": ErrorResponse, "description": "Scenario must be validated first"},
+    },
+)
+def create_run(
+    scenario_id: str,
+    payload: RunRequest,
+    response: Response,
+    store: Store = Depends(get_store),
+) -> Run:
+    scenario = _require_scenario(store, scenario_id)
+
+    if payload.solver_parameters.num_search_workers != 1:
+        # 04 §10: anything else makes tie-breaking and the hashes unreproducible.
+        raise ApiError(
+            "INVALID_INPUT",
+            "num_search_workers must be 1.",
+            details=[
+                {
+                    "location": "solver_parameters.num_search_workers",
+                    "message": f"got {payload.solver_parameters.num_search_workers}, expected 1",
+                }
+            ],
+        )
+
+    if store.get_validation(scenario_id) is None:
+        raise ApiError(
+            "VALIDATION_REQUIRED",
+            f"Scenario {scenario_id} must be validated before it can be solved.",
+        )
+
+    record = run_baseline(
+        run_id=store.next_run_id(),
+        scenario_id=scenario_id,
+        snapshot=snapshot_of(scenario),
+        parameters=SolverParameters(
+            random_seed=payload.solver_parameters.random_seed,
+            num_search_workers=payload.solver_parameters.num_search_workers,
+            max_time_seconds=payload.solver_parameters.max_time_seconds,
+        ),
+    )
+    record["created_at"] = utc_now().isoformat()
+    store.save_run(record)
+    store.update_scenario_state(scenario_id, "SOLVED")
+
+    response.headers["Location"] = f"/v1/runs/{record['run_id']}"
+    return Run.model_validate(record)
+
+
+def _require_scenario(store: Store, scenario_id: str) -> dict:
+    scenario = store.get_scenario(scenario_id)
+    if scenario is None:
+        raise ApiError("SCENARIO_NOT_FOUND", f"Scenario {scenario_id} does not exist.")
+    return scenario
 
 
 def _reject_inconsistent_request(payload: ScenarioCreateRequest) -> None:

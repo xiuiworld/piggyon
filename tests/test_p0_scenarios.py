@@ -2,24 +2,9 @@
 
 from __future__ import annotations
 
-import copy
-
-import pytest
 from fastapi.testclient import TestClient
 
-from app.canonical import canonical_create_request, load_canonical_snapshot
-from app.main import app
-
-
-@pytest.fixture
-def client() -> TestClient:
-    with TestClient(app) as test_client:
-        yield test_client
-
-
-@pytest.fixture
-def request_body() -> dict:
-    return copy.deepcopy(canonical_create_request())
+from app.canonical import load_canonical_snapshot
 
 
 def test_health_reports_reachable_storage(client: TestClient) -> None:
