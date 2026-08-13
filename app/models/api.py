@@ -119,8 +119,11 @@ class Reproducibility(BaseModel):
 class Run(BaseModel):
     run_id: str
     scenario_id: str
-    solver_status: Literal["OPTIMAL", "FEASIBLE", "INFEASIBLE", "ERROR"]
-    run_state: Literal["SOLVED_OPTIMAL", "SOLVED_FEASIBLE", "MODEL_INFEASIBLE", "ERROR"]
+    # No ERROR: an unsolved run is refused with 503 and never stored, so it
+    # cannot be read back. Keeping the value would advertise a state the API
+    # never emits.
+    solver_status: Literal["OPTIMAL", "FEASIBLE", "INFEASIBLE"]
+    run_state: Literal["SOLVED_OPTIMAL", "SOLVED_FEASIBLE", "MODEL_INFEASIBLE"]
     is_optimal: bool
     validator_status: Literal["PASS", "FAIL"]
     # A FAIL is only actionable if the UI can say which rule broke and on what
@@ -129,6 +132,10 @@ class Run(BaseModel):
     reproducibility: Reproducibility
     assignments: list[AssignmentModel]
     order_outcomes: list[OrderOutcomeModel]
+    # The per-stage lexicographic values. These are the only signal separating
+    # a fully refined OPTIMAL plan from one that ran out of budget, so they are
+    # served rather than computed and discarded.
+    objective_values: dict[str, int] = Field(default_factory=dict)
 
 
 AdjustmentType = Literal[

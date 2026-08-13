@@ -312,13 +312,20 @@ def _seconds_from(snapshot: ScenarioInputSnapshot, moment) -> int:
 
 
 def _errored(evaluation: ScenarioEvaluation) -> SolveResult:
-    """No solution was proved, so there is no plan to report."""
+    """No solution was proved, so there is no plan to report.
+
+    Outcomes are deliberately empty. Building them from an empty assignment map
+    would run every eligible order down the "eligible but not placed" branch and
+    label it CAPACITY_CONFLICT — the operator reads "the slots were full" when
+    nothing was actually computed. The API turns this into 503 rather than
+    publishing a run, so nothing downstream depends on these being filled in.
+    """
     return SolveResult(
         solver_status="ERROR",
         run_state="ERROR",
         is_optimal=False,
         assignments=[],
-        order_outcomes=_build_outcomes(evaluation, {}),
+        order_outcomes=[],
         objective_values={},
     )
 
@@ -342,6 +349,10 @@ def _build_outcomes(
 
     for e in sorted(evaluation.evaluations, key=lambda e: e.order_id):
         if e.input_state == "REVIEW_REQUIRED":
+            # REVIEW_REQUIRED covers more than absence. Telling an operator to
+            # "complete required fields" when nothing is missing, and handing
+            # them an empty missing_fields list, hides the actual fault.
+            missing = bool(e.missing_fields)
             outcomes.append(
                 OrderOutcome(
                     order_id=e.order_id,
@@ -350,8 +361,14 @@ def _build_outcomes(
                     assignment_state=NOT_APPLICABLE,
                     alternative_state="NOT_SEARCHED",
                     primary_reason_code=e.primary_reason_code or rc.MISSING_REQUIRED_FIELD,
-                    evidence={"missing_fields": e.missing_fields},
-                    next_actions=["COMPLETE_REQUIRED_FIELDS"],
+                    evidence=(
+                        {"missing_fields": e.missing_fields}
+                        if missing
+                        else {"reason_codes": e.reason_codes}
+                    ),
+                    next_actions=(
+                        ["COMPLETE_REQUIRED_FIELDS"] if missing else ["CORRECT_INPUT_VALUES"]
+                    ),
                 )
             )
             continue

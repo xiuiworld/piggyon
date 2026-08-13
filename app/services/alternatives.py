@@ -36,6 +36,15 @@ class PolicyViolation(Exception):
         self.forbidden = forbidden
 
 
+class AmbiguousAlternative(Exception):
+    """More approved destinations than a single change can express."""
+
+    def __init__(self, order_id: str, terminal_ids: list[str]) -> None:
+        super().__init__(f"{order_id}: {', '.join(terminal_ids)}")
+        self.order_id = order_id
+        self.terminal_ids = list(terminal_ids)
+
+
 @dataclass
 class AlternativeOutcome:
     found: bool
@@ -76,7 +85,14 @@ def build_change_set(
     changes: list[dict[str, Any]] = []
 
     if CHANGE_TO_APPROVED_TERMINAL in requested:
-        for terminal_id in window.alternative_destination_terminal_ids:
+        approved = window.alternative_destination_terminal_ids
+        if len(approved) > 1:
+            # Only one destination can be applied, so emitting a change per
+            # terminal would report changes that never happened and let the
+            # sort order — not feasibility — pick the winner. Refuse instead of
+            # overwriting silently; the canonical scenario approves exactly one.
+            raise AmbiguousAlternative(order_id, approved)
+        for terminal_id in approved:
             changes.append(
                 {"type": CHANGE_TO_APPROVED_TERMINAL, "destination_terminal_id": terminal_id}
             )
@@ -95,7 +111,21 @@ def derive_snapshot(
     order_id: str,
     change_set: list[dict[str, Any]],
 ) -> tuple[ScenarioInputSnapshot, list[str]]:
-    """Build the derived scenario and the service set opened to this order."""
+    """Build the derived scenario and the service set opened to this order.
+
+    Returns the derived snapshot and `order_services`. The two service sets
+    have different jobs and must not be conflated:
+
+    - `order_services` is what the **requesting order alone** may use. It is
+      passed per-order to the evaluator.
+    - `derived.baseline_service_ids` is the **validation scope**: the plan
+      validator has to accept the target's assignment on the added service, so
+      the derived scenario has to declare it.
+
+    Every other order keeps the original baseline, which the caller supplies
+    explicitly. They were once built identically, which silently made the
+    per-order narrowing a no-op and let unrelated orders take the new slots.
+    """
     payload = snapshot.model_dump(mode="json")
     payload["scenario_id"] = scenario_id
     payload["scenario_type"] = "ALTERNATIVE"
@@ -144,7 +174,12 @@ def search_alternative(
     derived, order_services = derive_snapshot(snapshot, scenario_id, order_id, change_set)
 
     evaluation = evaluate_scenario(
-        derived, service_ids_by_order={order_id: order_services}
+        derived,
+        # Everyone else stays on the ORIGINAL baseline. Leaving this to default
+        # would read it off the derived snapshot, which already carries the
+        # widened set for validation, and every order would get the new service.
+        service_ids=list(snapshot.baseline_service_ids),
+        service_ids_by_order={order_id: order_services},
     )
     result = solve_baseline(derived, evaluation, parameters)
     validation = validate_plan(
@@ -168,6 +203,17 @@ def search_alternative(
 
     deltas = _assignment_deltas(baseline_run.get("assignments", []), assignments)
     impacted = sorted({d["order_id"] for d in deltas})
+
+    if not deltas:
+        # The derived plan is identical to the baseline, so there is nothing to
+        # report as an alternative. Returning "found" here would build a result
+        # whose deltas violate their own minItems contract, and the response
+        # would fail validation *after* the derived scenario had been stored.
+        return AlternativeOutcome(
+            found=False,
+            change_set=change_set,
+            reason_code=rc.ALTERNATIVE_NOT_REQUIRED,
+        )
 
     target_outcome = next(o for o in outcomes if o["order_id"] == order_id)
     target_outcome["alternative_state"] = "AVAILABLE"
@@ -252,13 +298,17 @@ def apply_to_baseline(
     assignment it had, so the UI shows a 조건부 대안 있음 badge beside the
     original verdict instead of replacing it.
     """
+    available = alternative_state == "AVAILABLE"
+
     for outcome in baseline_run.get("order_outcomes", []):
         if outcome["order_id"] == order_id:
             outcome["alternative_state"] = alternative_state
-            outcome["display_badges"] = (
-                ["조건부 대안 있음"] if alternative_state == "AVAILABLE" else []
+            outcome["display_badges"] = ["조건부 대안 있음"] if available else []
+            # The link and the state are one fact, so they move together. Only
+            # writing the id when it is set left a NONE outcome still pointing
+            # at a scenario, and the UI renders that pointer as a route.
+            outcome["alternative_scenario_id"] = (
+                alternative_scenario_id if available else None
             )
-            if alternative_scenario_id:
-                outcome["alternative_scenario_id"] = alternative_scenario_id
             return outcome
     return {}

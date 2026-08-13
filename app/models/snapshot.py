@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
 CompatibilityTag = Literal["TRAILER_STANDARD", "TRAILER_TALL"]
 CompatibilityTags = Annotated[list[CompatibilityTag], Field(min_length=1)]
@@ -34,7 +34,13 @@ OBJECTIVE_ORDER: tuple[str, ...] = (
 
 
 class StrictModel(BaseModel):
-    """Reject unknown keys so a typo in the snapshot is a 400, not a silent drop."""
+    """Reject unknown keys so a typo in the snapshot is a 400, not a silent drop.
+
+    Timestamps are `AwareDatetime` throughout. The snapshot pins `timezone`, so
+    a value without an offset is ambiguous; accepting one let it pass creation
+    and validation and then fail deep inside the solve, where subtracting a
+    naive from an aware datetime raises and the caller sees a bare 500.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -98,9 +104,9 @@ class Service(StrictModel):
     service_id: str
     origin_terminal_id: str
     destination_terminal_id: str
-    departure_at: datetime
-    arrival_at: datetime
-    planning_cutoff_at: datetime
+    departure_at: AwareDatetime
+    arrival_at: AwareDatetime
+    planning_cutoff_at: AwareDatetime
     route_constraint_id: str
     available: bool
 
@@ -136,8 +142,8 @@ class Order(StrictModel):
     shipper_id: str
     origin_terminal_ids: list[str] = Field(min_length=1)
     destination_terminal_ids: list[str] = Field(min_length=1)
-    ready_at: datetime
-    due_at: datetime
+    ready_at: AwareDatetime
+    due_at: AwareDatetime
     # The one permitted null in the snapshot: it reproduces ORD-006's
     # REVIEW_REQUIRED during validation (04 §11). A *missing* key is still a 400.
     gross_weight_kg: int | None = Field(ge=1)
@@ -176,7 +182,7 @@ class ScenarioInputSnapshot(StrictModel):
     schema_version: Literal["1.0.0"]
     scenario_id: str = Field(min_length=1)
     scenario_type: Literal["BASELINE", "ALTERNATIVE"]
-    as_of: datetime
+    as_of: AwareDatetime
     timezone: Literal["Asia/Seoul"]
     baseline_service_ids: list[str] = Field(min_length=1)
     assumptions: list[Assumption] = Field(min_length=1)
@@ -210,6 +216,9 @@ class ScenarioInputSnapshot(StrictModel):
         _reject_duplicates(errors, "slots", [s.slot_id for s in self.slots])
         _reject_duplicates(errors, "orders", [o.order_id for o in self.orders])
         _reject_duplicates(errors, "shippers", [s.shipper_id for s in self.shippers])
+        _reject_duplicates(
+            errors, "route_constraints", [r.route_constraint_id for r in self.route_constraints]
+        )
 
         for service_id in self.baseline_service_ids:
             if service_id not in service_ids:

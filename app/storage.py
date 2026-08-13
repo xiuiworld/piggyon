@@ -28,6 +28,13 @@ TRACE_TABLE = "trace_events"
 # Enough history for a demo instance; ids are only scanned to resume numbering.
 _SEQUENCE_SCAN_LIMIT = 200
 
+# Ids share a namespace by prefix: every `RUN-ALT-001` also starts with `RUN-`.
+# A scan for the baseline counter has to exclude the longer sibling.
+_SIBLING_PREFIXES: dict[str, tuple[str, ...]] = {
+    "RUN-": ("RUN-ALT-",),
+    "SCN-": ("SCN-ALT-",),
+}
+
 
 class ScenarioRecord(dict):
     """Stored scenario row. A plain dict keeps both backends symmetric."""
@@ -56,6 +63,17 @@ class Store(Protocol):
     def save_run(self, record: dict[str, Any]) -> None: ...
 
     def get_run(self, run_id: str) -> dict[str, Any] | None: ...
+
+    def update_order_outcome(
+        self, run_id: str, order_id: str, outcome: dict[str, Any]
+    ) -> None:
+        """Replace one order's outcome inside a run, atomically.
+
+        Recording an alternative used to read the whole run, edit one order and
+        write the document back. Two operators working on different orders both
+        read before either wrote, and the later write reverted the earlier
+        order's alternative — while its derived scenario stayed in the store.
+        """
 
     def next_alternative_sequence(self) -> int: ...
 
@@ -124,6 +142,18 @@ class MemoryStore:
     def get_run(self, run_id: str) -> dict[str, Any] | None:
         with self._lock:
             return self._runs.get(run_id)
+
+    def update_order_outcome(
+        self, run_id: str, order_id: str, outcome: dict[str, Any]
+    ) -> None:
+        with self._lock:
+            run = self._runs.get(run_id)
+            if run is None:
+                return
+            for index, existing in enumerate(run.get("order_outcomes", [])):
+                if existing["order_id"] == order_id:
+                    run["order_outcomes"][index] = outcome
+                    return
 
     def next_alternative_sequence(self) -> int:
         with self._lock:
@@ -243,6 +273,23 @@ class SupabaseStore:
         row = self._one(RUNS_TABLE, "run_id", run_id)
         return row.get("document") if row else None
 
+    def update_order_outcome(
+        self, run_id: str, order_id: str, outcome: dict[str, Any]
+    ) -> None:
+        # Narrow the window by re-reading here rather than reusing a document
+        # the caller fetched before it did its own work.
+        with self._lock:
+            record = self.get_run(run_id)
+            if record is None:
+                return
+            for index, existing in enumerate(record.get("order_outcomes", [])):
+                if existing["order_id"] == order_id:
+                    record["order_outcomes"][index] = outcome
+                    break
+            else:
+                return
+            self.save_run(record)
+
     def next_alternative_sequence(self) -> int:
         with self._lock:
             if self._alternative_seq is None:
@@ -314,13 +361,14 @@ class SupabaseStore:
         alternative's counter. Only an exact `prefix + digits` match counts.
         """
         try:
-            response = (
-                self._client.table(table)
-                .select(column)
-                .order(column, desc=True)
-                .limit(_SEQUENCE_SCAN_LIMIT)
-                .execute()
-            )
+            # Filter in the query, not after the limit. Ordering is textual, so
+            # `RUN-ALT-001` sorts above `RUN-999` and a descending page could be
+            # entirely alternative ids; every one fails the digit check, the
+            # sequence restarts at 1, and the upsert overwrites a live run.
+            query = self._client.table(table).select(column).like(column, f"{prefix}%")
+            for other in _SIBLING_PREFIXES.get(prefix, ()):  # exclude longer ids
+                query = query.not_.like(column, f"{other}%")
+            response = query.order(column, desc=True).limit(_SEQUENCE_SCAN_LIMIT).execute()
         except Exception as exc:  # noqa: BLE001
             logger.warning("could not read last %s, starting at 0: %s", column, exc)
             return 0
@@ -331,6 +379,8 @@ class SupabaseStore:
             if not value.startswith(prefix):
                 continue
             suffix = value[len(prefix):]
+            # Compare numerically: text ordering also puts `RUN-999` above
+            # `RUN-1000`, so the largest string is not the largest number.
             if suffix.isdigit():
                 highest = max(highest, int(suffix))
         return highest

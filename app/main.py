@@ -13,9 +13,16 @@ from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.config import get_settings
-from app.errors import ApiError, api_error_handler, validation_error_handler
+from app.errors import (
+    ApiError,
+    api_error_handler,
+    http_exception_handler,
+    unhandled_exception_handler,
+    validation_error_handler,
+)
 from app.routers import ai, runs, scenarios
 from app.storage import build_store
 
@@ -50,6 +57,9 @@ app.add_middleware(
 
 app.add_exception_handler(ApiError, api_error_handler)
 app.add_exception_handler(RequestValidationError, validation_error_handler)
+app.add_exception_handler(StarletteHTTPException, http_exception_handler)
+# 04 §1 promises the envelope on *every* failure, including ones nobody planned.
+app.add_exception_handler(Exception, unhandled_exception_handler)
 
 app.include_router(scenarios.router)
 app.include_router(runs.router)
@@ -73,12 +83,47 @@ def custom_openapi() -> dict:
         description=app.description,
         routes=app.routes,
     )
-    for path_item in schema.get("paths", {}).values():
-        for operation in path_item.values():
+    declared = _declared_422_operations()
+    for path, path_item in schema.get("paths", {}).items():
+        for method, operation in path_item.items():
+            if (path, method) in declared:
+                # The route really does answer 422 (VALIDATION_REQUIRED), so
+                # removing it would hide a branch the client has to handle.
+                continue
             operation.get("responses", {}).pop("422", None)
 
     app.openapi_schema = schema
     return schema
+
+
+def _declared_422_operations() -> set[tuple[str, str]]:
+    """Routes that opted into 422 themselves, as opposed to FastAPI adding it.
+
+    Included routers are nested rather than flattened into `app.routes`, so
+    this walks them; scanning only the top level found nothing and stripped
+    every 422, including the ones the run and export endpoints really return.
+    """
+    found: set[tuple[str, str]] = set()
+
+    def walk(routes) -> None:
+        for route in routes:
+            # An included router appears as a wrapper; its real APIRoutes hang
+            # off `original_router`, already carrying their full path.
+            nested = getattr(route, "routes", None)
+            if nested is None:
+                wrapped = getattr(route, "original_router", None)
+                nested = getattr(wrapped, "routes", None) if wrapped else None
+            if nested:
+                walk(nested)
+                continue
+
+            responses = getattr(route, "responses", None) or {}
+            if 422 in responses or "422" in responses:
+                for method in getattr(route, "methods", set()) or set():
+                    found.add((getattr(route, "path", ""), method.lower()))
+
+    walk(app.routes)
+    return found
 
 
 app.openapi = custom_openapi

@@ -31,7 +31,10 @@ paths:
         content: {application/json: {schema: {$ref: '#/components/schemas/RunRequest'}}}
       responses:
         '201': {description: Run completed, content: {application/json: {schema: {$ref: '#/components/schemas/Run'}}}}
+        '400': {$ref: '#/components/responses/InvalidInput'}
+        '404': {$ref: '#/components/responses/NotFound'}
         '422': {$ref: '#/components/responses/ValidationRequired'}
+        '503': {$ref: '#/components/responses/SolverUnavailable'}
   /v1/runs/{run_id}:
     get:
       operationId: getRun
@@ -136,6 +139,7 @@ components:
     ValidationRequired: {description: Scenario must be validated first, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
     PolicyViolation: {description: Requested change is forbidden, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
     RunNotAcceptable: {description: Only OPTIMAL and validator PASS runs can be accepted, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+    SolverUnavailable: {description: The solver produced no plan, so no run was created, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
   schemas:
     ScenarioCreateRequest:
       type: object
@@ -338,8 +342,10 @@ components:
       properties:
         run_id: {type: string}
         scenario_id: {type: string}
-        solver_status: {type: string, enum: [OPTIMAL, FEASIBLE, INFEASIBLE, ERROR]}
-        run_state: {type: string, enum: [SOLVED_OPTIMAL, SOLVED_FEASIBLE, MODEL_INFEASIBLE, ERROR]}
+        # ERROR is deliberately absent: a solve that proves nothing yields
+        # 503 SOLVER_UNAVAILABLE and no run, so no client can ever observe it.
+        solver_status: {type: string, enum: [OPTIMAL, FEASIBLE, INFEASIBLE]}
+        run_state: {type: string, enum: [SOLVED_OPTIMAL, SOLVED_FEASIBLE, MODEL_INFEASIBLE]}
         is_optimal: {type: boolean}
         validator_status: {type: string, enum: [PASS, FAIL]}
         validator_findings:
@@ -351,6 +357,13 @@ components:
         reproducibility: {$ref: '#/components/schemas/Reproducibility'}
         assignments: {type: array, items: {$ref: '#/components/schemas/Assignment'}}
         order_outcomes: {type: array, items: {$ref: '#/components/schemas/OrderOutcome'}}
+        objective_values:
+          type: object
+          additionalProperties: {type: integer}
+          description: >-
+            Value reached at each lexicographic stage. The only signal that
+            separates a fully refined OPTIMAL plan from one whose time budget
+            ran out mid-refinement.
     ValidatorFinding:
       type: object
       required: [check, order_id, message]

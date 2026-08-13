@@ -105,6 +105,7 @@ def validate_scenario(
         400: {"model": ErrorResponse, "description": "Invalid input"},
         404: {"model": ErrorResponse, "description": "Scenario not found"},
         422: {"model": ErrorResponse, "description": "Scenario must be validated first"},
+        503: {"model": ErrorResponse, "description": "Solver produced no plan"},
     },
 )
 def create_run(
@@ -145,6 +146,18 @@ def create_run(
         ),
         raw_snapshot=scenario["input_snapshot"],
     )
+    if record["run_state"] == "ERROR":
+        # The solver proved nothing, so there is no plan and no per-order
+        # verdict to publish. Storing the run anyway would stamp every eligible
+        # order UNASSIGNED/CAPACITY_CONFLICT — "the slots were full" — when the
+        # truth is that nothing was computed, and the plan validator would
+        # cheerfully PASS a run with no assignments to contradict.
+        raise ApiError(
+            "SOLVER_UNAVAILABLE",
+            "The solver did not produce a plan within the time budget.",
+            details=[{"solver_status": record["solver_status"]}],
+        )
+
     record["created_at"] = utc_now().isoformat()
     store.save_run(record)
     store.update_scenario_state(scenario_id, "SOLVED")

@@ -21,6 +21,7 @@ from app.models.api import (
     Run,
 )
 from app.services.alternatives import (
+    AmbiguousAlternative,
     PolicyViolation,
     apply_to_baseline,
     search_alternative,
@@ -100,6 +101,13 @@ def create_alternative(
             "Requested adjustment is forbidden by the scenario policy.",
             details=[{"adjustment_type": t} for t in exc.forbidden],
         ) from exc
+    except AmbiguousAlternative as exc:
+        raise ApiError(
+            "INVALID_INPUT",
+            f"Order {exc.order_id} approves more than one destination terminal, "
+            "so a single alternative cannot express the change.",
+            details=[{"destination_terminal_id": t} for t in exc.terminal_ids],
+        ) from exc
 
     if not outcome.found:
         baseline_update = apply_to_baseline(baseline_run, payload.order_id, "NONE")
@@ -122,6 +130,25 @@ def create_alternative(
             ).model_dump(mode="json"),
         )
 
+    baseline_update = apply_to_baseline(
+        baseline_run, payload.order_id, "AVAILABLE", outcome.alternative_scenario_id
+    )
+
+    # Build and validate the response BEFORE writing anything. A response model
+    # that rejects the result would otherwise leave a derived scenario and run
+    # committed to the store behind a 500, with no rollback.
+    body = AlternativeResult(
+        parent_run_id=run_id,
+        alternative_scenario_id=outcome.alternative_scenario_id,
+        alternative_run_id=outcome.alternative_run_id,
+        change_set=outcome.change_set,
+        impacted_order_ids=outcome.impacted_order_ids,
+        baseline_order_update=baseline_update,
+        alternative_run_order_outcome=outcome.alternative_run_order_outcome,
+        assignment_deltas=outcome.assignment_deltas,
+        validator_status=outcome.validator_status,
+    )
+
     store.save_scenario(
         {
             "scenario_id": outcome.alternative_scenario_id,
@@ -141,30 +168,23 @@ def create_alternative(
     if outcome.alternative_validation is not None:
         store.save_validation(outcome.alternative_scenario_id, outcome.alternative_validation)
 
-    baseline_update = apply_to_baseline(
-        baseline_run, payload.order_id, "AVAILABLE", outcome.alternative_scenario_id
-    )
-    store.save_run(baseline_run)
-    _trace(store, baseline_run["scenario_id"], "ALTERNATIVE_CREATED", {
+    store.update_order_outcome(run_id, payload.order_id, baseline_update)
+
+    event = {
         "run_id": run_id,
         "order_id": payload.order_id,
         "alternative_run_id": outcome.alternative_run_id,
         "change_set": outcome.change_set,
-    })
+    }
+    _trace(store, baseline_run["scenario_id"], "ALTERNATIVE_CREATED", event)
+    # Also on the derived scenario: its own export bundle reads trace by its own
+    # scenario id, so recording only against the parent left the alternative's
+    # audit trail empty.
+    _trace(store, outcome.alternative_scenario_id, "ALTERNATIVE_CREATED", event)
 
     response.status_code = status.HTTP_201_CREATED
     response.headers["Location"] = f"/v1/runs/{outcome.alternative_run_id}"
-    return AlternativeResult(
-        parent_run_id=run_id,
-        alternative_scenario_id=outcome.alternative_scenario_id,
-        alternative_run_id=outcome.alternative_run_id,
-        change_set=outcome.change_set,
-        impacted_order_ids=outcome.impacted_order_ids,
-        baseline_order_update=baseline_update,
-        alternative_run_order_outcome=outcome.alternative_run_order_outcome,
-        assignment_deltas=outcome.assignment_deltas,
-        validator_status=outcome.validator_status,
-    )
+    return body
 
 
 @router.post(
@@ -222,7 +242,12 @@ def create_decision(
     "/{run_id}/export",
     response_model=ExportBundle,
     summary="Immutable demo and verification bundle",
-    responses={404: {"model": ErrorResponse, "description": "Run not found"}},
+    responses={
+        404: {"model": ErrorResponse, "description": "Run not found"},
+        # Raised when the scenario has no recorded validation; declaring it here
+        # is what keeps it in the served schema.
+        422: {"model": ErrorResponse, "description": "Scenario was never validated"},
+    },
 )
 def export_run(run_id: str, store: Store = Depends(get_store)) -> ExportBundle:
     run = _require_run(store, run_id)

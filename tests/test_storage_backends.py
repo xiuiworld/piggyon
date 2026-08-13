@@ -28,6 +28,9 @@ class FakeQuery:
         self._table = table
         self._rows: list[dict[str, Any]] | None = None
         self._filters: list[tuple[str, Any]] = []
+        # (column, sql-like pattern, keep_matching)
+        self._patterns: list[tuple[str, str, bool]] = []
+        self._negate_next = False
         self._order: tuple[str, bool] | None = None
         self._limit: int | None = None
         self._pending_update: dict[str, Any] | None = None
@@ -62,6 +65,17 @@ class FakeQuery:
         self._filters.append((column, value))
         return self
 
+    def like(self, column: str, pattern: str) -> "FakeQuery":
+        keep = not self._negate_next
+        self._negate_next = False
+        self._patterns.append((column, pattern, keep))
+        return self
+
+    @property
+    def not_(self) -> "FakeQuery":
+        self._negate_next = True
+        return self
+
     def order(self, column: str, desc: bool = False) -> "FakeQuery":
         self._order = (column, desc)
         return self
@@ -74,6 +88,11 @@ class FakeQuery:
         rows = [dict(r) for r in self._table.rows]
         for column, value in self._filters:
             rows = [r for r in rows if r.get(column) == value]
+        for column, pattern, keep in self._patterns:
+            prefix = pattern.rstrip("%")
+            rows = [
+                r for r in rows if str(r.get(column, "")).startswith(prefix) is keep
+            ]
 
         if self._pending_update is not None:
             for row in self._table.rows:

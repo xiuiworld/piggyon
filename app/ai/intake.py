@@ -30,6 +30,11 @@ DRAFT_FIELDS = REQUIRED_FIELDS + ["order_id"]
 SYSTEM_PROMPT = """\
 You extract rail freight order fields from a Korean shipping request.
 
+Return a JSON object with `order_draft`, `field_evidence` and
+`assumptions_flagged`. `order_draft` holds the order fields, every one of
+which may be null. Naming JSON here is also what makes the schema-less
+retry legal: that mode is refused outright unless the word appears.
+
 Rules:
 - Use null for anything the text does not state. Never guess, never average,
   never carry a default. A null is a correct answer and is preferred over a

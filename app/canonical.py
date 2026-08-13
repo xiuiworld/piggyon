@@ -19,8 +19,20 @@ SCENARIO_NAME = "canonical-v1-baseline"
 
 
 @lru_cache
+def _cached_snapshot_text() -> str:
+    return SCENARIO_PATH.read_text(encoding="utf-8")
+
+
 def load_canonical_snapshot() -> dict[str, Any]:
-    return json.loads(SCENARIO_PATH.read_text(encoding="utf-8"))
+    """A fresh copy of the canonical input on every call.
+
+    The cache holds the file text, not the parsed object. Handing out one
+    shared dict meant any caller that adjusted an order for its own purposes
+    silently rewrote the canonical scenario for everything later in the
+    process — including `input_snapshot_sha256`, which the whole reproducibility
+    contract rests on.
+    """
+    return json.loads(_cached_snapshot_text())
 
 
 def canonical_create_request() -> dict[str, Any]:
