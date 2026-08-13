@@ -1,0 +1,20 @@
+# secrets
+.env
+.env.*
+!.env.example
+
+# python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+
+# local tooling state
+.claude/settings.local.json
+
+# os
+Thumbs.db
+desktop.ini
+.DS_Store

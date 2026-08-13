@@ -1,0 +1,392 @@
+openapi: 3.1.0
+info:
+  title: Rail Slot Planning MVP API
+  version: 1.0.0
+  description: All operational values in canonical-v1 are DEMO_ASSUMPTION.
+paths:
+  /v1/scenarios:
+    post:
+      operationId: createScenario
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ScenarioCreateRequest'}
+      responses:
+        '201': {description: Created, content: {application/json: {schema: {$ref: '#/components/schemas/Scenario'}}}}
+        '400': {$ref: '#/components/responses/InvalidInput'}
+  /v1/scenarios/{scenario_id}/validate:
+    post:
+      operationId: validateScenario
+      parameters: [{$ref: '#/components/parameters/ScenarioId'}]
+      responses:
+        '200': {description: Validation completed, content: {application/json: {schema: {$ref: '#/components/schemas/ValidationResult'}}}}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /v1/scenarios/{scenario_id}/runs:
+    post:
+      operationId: runBaselinePlan
+      parameters: [{$ref: '#/components/parameters/ScenarioId'}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/RunRequest'}}}
+      responses:
+        '201': {description: Run completed, content: {application/json: {schema: {$ref: '#/components/schemas/Run'}}}}
+        '422': {$ref: '#/components/responses/ValidationRequired'}
+  /v1/runs/{run_id}:
+    get:
+      operationId: getRun
+      parameters: [{$ref: '#/components/parameters/RunId'}]
+      responses:
+        '200': {description: Run result, content: {application/json: {schema: {$ref: '#/components/schemas/Run'}}}}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /v1/runs/{run_id}/alternatives:
+    post:
+      operationId: createAlternative
+      parameters: [{$ref: '#/components/parameters/RunId'}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/AlternativeRequest'}}}
+      responses:
+        '201': {description: Alternative run, content: {application/json: {schema: {$ref: '#/components/schemas/AlternativeResult'}}}}
+        '200': {description: Permitted alternatives were searched but none is feasible, content: {application/json: {schema: {$ref: '#/components/schemas/AlternativeUnavailableResult'}}}}
+        '400': {$ref: '#/components/responses/InvalidInput'}
+        '409': {$ref: '#/components/responses/PolicyViolation'}
+  /v1/runs/{run_id}/decisions:
+    post:
+      operationId: recordDecision
+      parameters: [{$ref: '#/components/parameters/RunId'}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/DecisionRequest'}}}
+      responses:
+        '201': {description: Decision recorded, content: {application/json: {schema: {$ref: '#/components/schemas/Decision'}}}}
+        '409': {$ref: '#/components/responses/RunNotAcceptable'}
+  /v1/runs/{run_id}/export:
+    get:
+      operationId: exportRunBundle
+      parameters: [{$ref: '#/components/parameters/RunId'}]
+      responses:
+        '200': {description: Immutable demo and verification bundle, content: {application/json: {schema: {$ref: '#/components/schemas/ExportBundle'}}}}
+        '404': {$ref: '#/components/responses/NotFound'}
+components:
+  parameters:
+    ScenarioId: {name: scenario_id, in: path, required: true, schema: {type: string}}
+    RunId: {name: run_id, in: path, required: true, schema: {type: string}}
+  responses:
+    InvalidInput: {description: Invalid input, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+    NotFound: {description: Resource not found, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+    ValidationRequired: {description: Scenario must be validated first, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+    PolicyViolation: {description: Requested change is forbidden, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+    RunNotAcceptable: {description: Only OPTIMAL and validator PASS runs can be accepted, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+  schemas:
+    ScenarioCreateRequest:
+      type: object
+      required: [scenario_name, as_of, baseline_service_ids, input_snapshot, policy_version]
+      properties:
+        scenario_name: {type: string}
+        as_of: {type: string, format: date-time}
+        baseline_service_ids: {type: array, items: {type: string}, minItems: 1}
+        input_snapshot: {$ref: '#/components/schemas/ScenarioInputSnapshot'}
+        policy_version: {type: string}
+        assumption_ids: {type: array, items: {type: string}}
+    Scenario:
+      type: object
+      required: [scenario_id, state, created_at]
+      properties:
+        scenario_id: {type: string}
+        state: {type: string, enum: [VALIDATION_REQUIRED, READY_TO_SOLVE, SOLVED]}
+        created_at: {type: string, format: date-time}
+    ScenarioInputSnapshot:
+      type: object
+      required: [schema_version, scenario_id, scenario_type, as_of, timezone, baseline_service_ids, assumptions, shippers, terminals, route_constraints, services, wagons, slots, orders, policy]
+      properties:
+        schema_version: {type: string, const: '1.0.0'}
+        scenario_id: {type: string, minLength: 1}
+        scenario_type: {type: string, enum: [BASELINE, ALTERNATIVE]}
+        as_of: {type: string, format: date-time}
+        timezone: {type: string, const: Asia/Seoul}
+        baseline_service_ids: {type: array, minItems: 1, items: {type: string}}
+        assumptions: {type: array, minItems: 1, items: {$ref: '#/components/schemas/Assumption'}}
+        shippers: {type: array, minItems: 1, items: {$ref: '#/components/schemas/Shipper'}}
+        terminals: {type: array, minItems: 1, items: {$ref: '#/components/schemas/Terminal'}}
+        route_constraints: {type: array, minItems: 1, items: {$ref: '#/components/schemas/RouteConstraint'}}
+        services: {type: array, minItems: 1, items: {$ref: '#/components/schemas/Service'}}
+        wagons: {type: array, minItems: 1, items: {$ref: '#/components/schemas/Wagon'}}
+        slots: {type: array, minItems: 1, items: {$ref: '#/components/schemas/Slot'}}
+        orders: {type: array, minItems: 1, items: {$ref: '#/components/schemas/Order'}}
+        policy: {$ref: '#/components/schemas/Policy'}
+    Assumption:
+      type: object
+      required: [assumption_id, source_type, description, impact_scope]
+      properties:
+        assumption_id: {type: string}
+        source_type: {type: string, enum: [DEMO_ASSUMPTION, PUBLIC_CONFIRMED, INSTITUTION_CONFIRMATION_REQUIRED]}
+        description: {type: string, minLength: 1}
+        impact_scope: {type: string, minLength: 1}
+    Geo:
+      type: object
+      required: [lat, lng]
+      properties:
+        lat: {type: number, minimum: -90, maximum: 90}
+        lng: {type: number, minimum: -180, maximum: 180}
+    Shipper:
+      type: object
+      required: [shipper_id, display_name, pickup_geo, delivery_geo]
+      properties:
+        shipper_id: {type: string}
+        display_name: {type: string}
+        pickup_geo: {$ref: '#/components/schemas/Geo'}
+        delivery_geo: {$ref: '#/components/schemas/Geo'}
+    Terminal:
+      type: object
+      required: [terminal_id, display_name, geo, operating_window, minimum_handling_minutes, supported_tags]
+      properties:
+        terminal_id: {type: string}
+        display_name: {type: string}
+        geo: {$ref: '#/components/schemas/Geo'}
+        operating_window: {$ref: '#/components/schemas/OperatingWindow'}
+        intake_cutoff_minutes: {type: integer, minimum: 0}
+        minimum_handling_minutes: {type: integer, minimum: 0}
+        supported_tags: {$ref: '#/components/schemas/CompatibilityTags'}
+    OperatingWindow:
+      type: object
+      required: [open, close]
+      properties:
+        open: {type: string, pattern: '^[0-2][0-9]:[0-5][0-9]$'}
+        close: {type: string, pattern: '^[0-2][0-9]:[0-5][0-9]$'}
+    RouteConstraint:
+      type: object
+      required: [route_constraint_id, max_height_mm, max_width_mm, max_weight_kg]
+      properties:
+        route_constraint_id: {type: string}
+        max_height_mm: {type: integer, minimum: 1}
+        max_width_mm: {type: integer, minimum: 1}
+        max_weight_kg: {type: integer, minimum: 1}
+    Service:
+      type: object
+      required: [service_id, origin_terminal_id, destination_terminal_id, departure_at, arrival_at, planning_cutoff_at, route_constraint_id, available]
+      properties:
+        service_id: {type: string}
+        origin_terminal_id: {type: string}
+        destination_terminal_id: {type: string}
+        departure_at: {type: string, format: date-time}
+        arrival_at: {type: string, format: date-time}
+        planning_cutoff_at: {type: string, format: date-time}
+        route_constraint_id: {type: string}
+        available: {type: boolean}
+    Wagon:
+      type: object
+      required: [wagon_id, service_id, max_total_weight_kg, available, display_order]
+      properties:
+        wagon_id: {type: string}
+        service_id: {type: string}
+        max_total_weight_kg: {type: integer, minimum: 1}
+        available: {type: boolean}
+        display_order: {type: integer, minimum: 1}
+    Dimensions:
+      type: object
+      required: [length, width, height]
+      properties:
+        length: {type: integer, minimum: 1}
+        width: {type: integer, minimum: 1}
+        height: {type: integer, minimum: 1}
+    CompatibilityTags:
+      type: array
+      minItems: 1
+      items: {type: string, enum: [TRAILER_STANDARD, TRAILER_TALL]}
+    DisplayPosition:
+      type: object
+      required: [x, y]
+      properties:
+        x: {type: number, minimum: 0, maximum: 100}
+        y: {type: number, minimum: 0, maximum: 100}
+    Slot:
+      type: object
+      required: [slot_id, wagon_id, position, display, max_weight_kg, max_dimensions_mm, supported_tags, available]
+      properties:
+        slot_id: {type: string}
+        wagon_id: {type: string}
+        position: {type: integer, minimum: 1}
+        display: {$ref: '#/components/schemas/DisplayPosition'}
+        max_weight_kg: {type: integer, minimum: 1}
+        max_dimensions_mm: {$ref: '#/components/schemas/Dimensions'}
+        supported_tags: {$ref: '#/components/schemas/CompatibilityTags'}
+        available: {type: boolean}
+    AdjustmentWindow:
+      type: object
+      properties:
+        alternative_service_ids: {type: array, items: {type: string}}
+        alternative_destination_terminal_ids: {type: array, items: {type: string}}
+    Order:
+      type: object
+      required: [order_id, shipper_id, origin_terminal_ids, destination_terminal_ids, ready_at, due_at, gross_weight_kg, dimensions_mm, compatibility_tags, priority_class, adjustment_window]
+      properties:
+        order_id: {type: string}
+        shipper_id: {type: string}
+        origin_terminal_ids: {type: array, minItems: 1, items: {type: string}}
+        destination_terminal_ids: {type: array, minItems: 1, items: {type: string}}
+        ready_at: {type: string, format: date-time}
+        due_at: {type: string, format: date-time}
+        gross_weight_kg: {anyOf: [{type: integer, minimum: 1}, {type: 'null'}], description: Null is accepted only to return REVIEW_REQUIRED during validation.}
+        dimensions_mm: {$ref: '#/components/schemas/Dimensions'}
+        compatibility_tags: {$ref: '#/components/schemas/CompatibilityTags'}
+        priority_class: {type: string, enum: [P1, P2, P3]}
+        adjustment_window: {anyOf: [{$ref: '#/components/schemas/AdjustmentWindow'}, {type: 'null'}]}
+    Policy:
+      type: object
+      required: [policy_id, policy_version, priority_scores, objective_order, allowed_adjustments, forbidden_adjustments]
+      properties:
+        policy_id: {type: string}
+        policy_version: {type: string}
+        priority_scores: {type: object, required: [P1, P2, P3], properties: {P1: {type: integer}, P2: {type: integer}, P3: {type: integer}}}
+        objective_order: {const: [maximize_assigned_order_count, maximize_priority_score, minimize_due_at, canonical_order_slot]}
+        allowed_adjustments: {type: array, items: {type: string, enum: [ADD_ORDER_APPROVED_SERVICE, CHANGE_TO_APPROVED_TERMINAL]}}
+        forbidden_adjustments: {type: array, items: {type: string, enum: [CHANGE_WEIGHT_LIMIT, CHANGE_DIMENSION_LIMIT, CHANGE_ROUTE_CLEARANCE, CHANGE_DUE_AT]}}
+    SolverParameters:
+      type: object
+      required: [random_seed, num_search_workers, max_time_seconds]
+      properties:
+        random_seed: {type: integer, minimum: 0}
+        num_search_workers: {type: integer, const: 1}
+        max_time_seconds: {type: integer, minimum: 1}
+    RunRequest:
+      type: object
+      required: [solver_parameters]
+      properties:
+        solver_parameters: {$ref: '#/components/schemas/SolverParameters'}
+    ValidationResult:
+      type: object
+      required: [scenario_id, validation_status, orders]
+      properties:
+        scenario_id: {type: string}
+        validation_status: {type: string, enum: [COMPLETED, FAILED]}
+        orders: {type: array, items: {$ref: '#/components/schemas/OrderValidation'}}
+    OrderValidation:
+      type: object
+      required: [order_id, input_state, reason_codes, eligible_slot_ids]
+      properties:
+        order_id: {type: string}
+        input_state: {type: string, enum: [VALID, REVIEW_REQUIRED]}
+        reason_codes: {type: array, items: {type: string}}
+        missing_fields: {type: array, items: {type: string}}
+        eligible_slot_ids: {type: array, items: {type: string}}
+    Run:
+      type: object
+      required: [run_id, scenario_id, solver_status, run_state, is_optimal, validator_status, reproducibility, assignments, order_outcomes]
+      properties:
+        run_id: {type: string}
+        scenario_id: {type: string}
+        solver_status: {type: string, enum: [OPTIMAL, FEASIBLE, INFEASIBLE, ERROR]}
+        run_state: {type: string, enum: [SOLVED_OPTIMAL, SOLVED_FEASIBLE, MODEL_INFEASIBLE, ERROR]}
+        is_optimal: {type: boolean}
+        validator_status: {type: string, enum: [PASS, FAIL]}
+        reproducibility: {$ref: '#/components/schemas/Reproducibility'}
+        assignments: {type: array, items: {$ref: '#/components/schemas/Assignment'}}
+        order_outcomes: {type: array, items: {$ref: '#/components/schemas/OrderOutcome'}}
+    Reproducibility:
+      type: object
+      required: [solver_parameters, input_snapshot_sha256, policy_sha256, result_sha256]
+      properties:
+        solver_parameters: {$ref: '#/components/schemas/SolverParameters'}
+        input_snapshot_sha256: {type: string, pattern: '^[a-f0-9]{64}$'}
+        policy_sha256: {type: string, pattern: '^[a-f0-9]{64}$'}
+        result_sha256: {type: string, pattern: '^[a-f0-9]{64}$'}
+    Assignment:
+      type: object
+      required: [order_id, service_id, wagon_id, slot_id]
+      properties:
+        order_id: {type: string}
+        service_id: {type: string}
+        wagon_id: {type: string}
+        slot_id: {type: string}
+    AssignmentDelta:
+      type: object
+      required: [order_id, change_type, before_assignment, after_assignment]
+      properties:
+        order_id: {type: string}
+        change_type: {type: string, enum: [ADDED, MOVED, UNASSIGNED]}
+        before_assignment: {anyOf: [{$ref: '#/components/schemas/Assignment'}, {type: 'null'}]}
+        after_assignment: {anyOf: [{$ref: '#/components/schemas/Assignment'}, {type: 'null'}]}
+    OrderOutcome:
+      type: object
+      required: [order_id, input_state, eligibility_state, assignment_state, alternative_state, primary_reason_code]
+      properties:
+        order_id: {type: string}
+        input_state: {type: string, enum: [VALID, REVIEW_REQUIRED]}
+        eligibility_state: {type: string, enum: [ELIGIBLE, INELIGIBLE, NOT_EVALUATED]}
+        assignment_state: {type: string, enum: [ASSIGNED, UNASSIGNED, NOT_APPLICABLE]}
+        alternative_state: {type: string, enum: [AVAILABLE, NONE, NOT_SEARCHED]}
+        primary_reason_code: {type: string}
+        evidence: {type: object}
+        next_actions: {type: array, items: {type: string}}
+    AlternativeRequest:
+      type: object
+      required: [order_id, adjustment_types]
+      properties:
+        order_id: {type: string}
+        adjustment_types: {type: array, minItems: 1, items: {type: string, enum: [ADD_ORDER_APPROVED_SERVICE, CHANGE_TO_APPROVED_TERMINAL, CHANGE_WEIGHT_LIMIT, CHANGE_DIMENSION_LIMIT, CHANGE_ROUTE_CLEARANCE, CHANGE_DUE_AT]}}
+    AlternativeResult:
+      type: object
+      required: [alternative_scenario_id, alternative_run_id, change_set, impacted_order_ids, baseline_order_update, alternative_run_order_outcome, assignment_deltas, validator_status]
+      properties:
+        alternative_scenario_id: {type: string}
+        alternative_run_id: {type: string}
+        change_set: {type: array, items: {type: object}}
+        impacted_order_ids: {type: array, minItems: 1, items: {type: string}}
+        baseline_order_update: {$ref: '#/components/schemas/OrderOutcome'}
+        alternative_run_order_outcome: {$ref: '#/components/schemas/OrderOutcome'}
+        assignment_deltas: {type: array, minItems: 1, items: {$ref: '#/components/schemas/AssignmentDelta'}}
+        validator_status: {type: string, enum: [PASS, FAIL]}
+    AlternativeUnavailableResult:
+      type: object
+      required: [order_id, alternative_state, status, change_set, baseline_order_update, reason_code]
+      properties:
+        order_id: {type: string}
+        alternative_state: {type: string, const: NONE}
+        status: {type: string, const: NO_FEASIBLE_ALTERNATIVE}
+        change_set: {type: array, items: {type: object}}
+        baseline_order_update: {$ref: '#/components/schemas/OrderOutcome'}
+        reason_code: {type: string}
+    DecisionRequest:
+      type: object
+      required: [decision_state, actor_role, reason, selected_plan]
+      properties:
+        decision_state: {type: string, enum: [ACCEPTED, HELD, REJECTED]}
+        actor_role: {type: string, enum: [SCHEDULING_OPERATOR, PLANNING_OWNER]}
+        reason: {type: string, minLength: 1}
+        selected_plan: {type: string, enum: [BASELINE, ALTERNATIVE]}
+    Decision:
+      type: object
+      required: [decision_id, run_id, decision_state, created_at]
+      properties:
+        decision_id: {type: string}
+        run_id: {type: string}
+        decision_state: {type: string}
+        created_at: {type: string, format: date-time}
+    ExportBundle:
+      type: object
+      required: [scenario, input_snapshot, policy, run, validation_result, decisions, trace_events]
+      properties:
+        scenario: {$ref: '#/components/schemas/Scenario'}
+        input_snapshot: {$ref: '#/components/schemas/ScenarioInputSnapshot'}
+        policy: {$ref: '#/components/schemas/Policy'}
+        run: {$ref: '#/components/schemas/Run'}
+        validation_result: {$ref: '#/components/schemas/ValidationResult'}
+        decisions: {type: array, items: {$ref: '#/components/schemas/Decision'}}
+        trace_events: {type: array, items: {$ref: '#/components/schemas/TraceEvent'}}
+    TraceEvent:
+      type: object
+      required: [event_id, event_type, occurred_at, payload]
+      properties:
+        event_id: {type: string}
+        event_type: {type: string, enum: [SCENARIO_CREATED, VALIDATION_COMPLETED, RUN_COMPLETED, ALTERNATIVE_CREATED, DECISION_RECORDED]}
+        occurred_at: {type: string, format: date-time}
+        payload: {type: object}
+    Error:
+      type: object
+      required: [code, message, trace_id]
+      properties:
+        code: {type: string, enum: [INVALID_INPUT, SCENARIO_NOT_FOUND, RUN_NOT_FOUND, VALIDATION_REQUIRED, POLICY_VIOLATION, RUN_NOT_ACCEPTABLE, SOLVER_UNAVAILABLE]}
+        message: {type: string}
+        details: {type: array, items: {type: object}}
+        trace_id: {type: string}

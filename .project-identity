@@ -1,0 +1,7 @@
+profile=xiuiworld
+git_user_name=xiuiworld
+git_email=xiuiworld@gmail.com
+github_user=xiuiworld
+ssh_host=github-xiuiworld
+commit_allowed=true
+push_allowed=true

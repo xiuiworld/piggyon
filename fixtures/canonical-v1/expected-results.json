@@ -1,0 +1,92 @@
+{
+  "fixture_id": "SCN-CANONICAL-V1",
+  "baseline_run": {
+    "run_id": "RUN-CANONICAL-V1",
+    "scenario_id": "SCN-CANONICAL-V1",
+    "solver_status": "OPTIMAL",
+    "run_state": "SOLVED_OPTIMAL",
+    "is_optimal": true,
+    "validator_status": "PASS",
+    "reproducibility": {
+      "solver_parameters": {"random_seed": 7, "num_search_workers": 1, "max_time_seconds": 10},
+      "input_snapshot_sha256": "273b4e4683ea40702f05827959a5a9116986c4da4dda711ab2ef47e51f881372",
+      "policy_sha256": "081d8735988470546792eb814966aea73fdf745f555ab810331114d41dc4157f",
+      "result_sha256": "ef83e8880b1f69249182c5982611a923ff1251e75ca09961bd49acdba7bc7a94"
+    }
+  },
+  "baseline": {
+    "assignments": [
+      {"order_id": "ORD-001", "service_id": "SVC-AM-01", "wagon_id": "WGN-AM-01", "slot_id": "SLT-AM-01"},
+      {"order_id": "ORD-002", "service_id": "SVC-AM-01", "wagon_id": "WGN-AM-01", "slot_id": "SLT-AM-02"},
+      {"order_id": "ORD-003", "service_id": "SVC-AM-01", "wagon_id": "WGN-AM-01", "slot_id": "SLT-AM-03"}
+    ],
+    "order_outcomes": {
+      "ORD-001": {"input_state": "VALID", "eligibility_state": "ELIGIBLE", "assignment_state": "ASSIGNED", "alternative_state": "NOT_SEARCHED", "primary_reason_code": "ASSIGNED"},
+      "ORD-002": {"input_state": "VALID", "eligibility_state": "ELIGIBLE", "assignment_state": "ASSIGNED", "alternative_state": "NOT_SEARCHED", "primary_reason_code": "ASSIGNED"},
+      "ORD-003": {"input_state": "VALID", "eligibility_state": "ELIGIBLE", "assignment_state": "ASSIGNED", "alternative_state": "NOT_SEARCHED", "primary_reason_code": "ASSIGNED"},
+      "ORD-004": {"input_state": "VALID", "eligibility_state": "ELIGIBLE", "assignment_state": "UNASSIGNED", "alternative_state": "NOT_SEARCHED", "primary_reason_code": "CAPACITY_CONFLICT"},
+      "ORD-005": {"input_state": "VALID", "eligibility_state": "INELIGIBLE", "assignment_state": "NOT_APPLICABLE", "alternative_state": "NOT_SEARCHED", "primary_reason_code": "READY_AFTER_CUTOFF"},
+      "ORD-006": {"input_state": "REVIEW_REQUIRED", "eligibility_state": "NOT_EVALUATED", "assignment_state": "NOT_APPLICABLE", "alternative_state": "NOT_SEARCHED", "primary_reason_code": "MISSING_REQUIRED_FIELD"},
+      "ORD-007": {"input_state": "VALID", "eligibility_state": "INELIGIBLE", "assignment_state": "NOT_APPLICABLE", "alternative_state": "NOT_SEARCHED", "primary_reason_code": "TUNNEL_HEIGHT_EXCEEDED"},
+      "ORD-008": {"input_state": "VALID", "eligibility_state": "INELIGIBLE", "assignment_state": "NOT_APPLICABLE", "alternative_state": "NOT_SEARCHED", "primary_reason_code": "TERMINAL_NOT_COMPATIBLE"},
+      "ORD-009": {"input_state": "VALID", "eligibility_state": "INELIGIBLE", "assignment_state": "NOT_APPLICABLE", "alternative_state": "NOT_SEARCHED", "primary_reason_code": "DUE_TIME_EXCEEDED"}
+    }
+  },
+  "alternatives": {
+    "ORD-005": {
+      "http_status": 201,
+      "request": {"order_id": "ORD-005", "adjustment_types": ["ADD_ORDER_APPROVED_SERVICE"]},
+      "alternative_scenario_id": "SCN-ALT-005",
+      "alternative_run_id": "RUN-ALT-005",
+      "change_set": [{"type": "ADD_ORDER_APPROVED_SERVICE", "service_id": "SVC-NEXT-01"}],
+      "impacted_order_ids": ["ORD-005"],
+      "baseline_order_update": {"order_id": "ORD-005", "input_state": "VALID", "eligibility_state": "INELIGIBLE", "assignment_state": "NOT_APPLICABLE", "alternative_state": "AVAILABLE", "primary_reason_code": "READY_AFTER_CUTOFF", "display_badges": ["조건부 대안 있음"], "alternative_scenario_id": "SCN-ALT-005"},
+      "alternative_run_order_outcome": {"order_id": "ORD-005", "input_state": "VALID", "eligibility_state": "ELIGIBLE", "assignment_state": "ASSIGNED", "alternative_state": "AVAILABLE", "primary_reason_code": "ALTERNATIVE_AVAILABLE"},
+      "assignment_deltas": [{"order_id": "ORD-005", "change_type": "ADDED", "before_assignment": null, "after_assignment": {"order_id": "ORD-005", "service_id": "SVC-NEXT-01", "wagon_id": "WGN-NEXT-01", "slot_id": "SLT-NEXT-01"}}],
+      "validator_status": "PASS",
+      "expected_assignment": {"service_id": "SVC-NEXT-01", "wagon_id": "WGN-NEXT-01", "slot_id": "SLT-NEXT-01"}
+    },
+    "ORD-008": {
+      "http_status": 201,
+      "request": {"order_id": "ORD-008", "adjustment_types": ["ADD_ORDER_APPROVED_SERVICE", "CHANGE_TO_APPROVED_TERMINAL"]},
+      "alternative_scenario_id": "SCN-ALT-008",
+      "alternative_run_id": "RUN-ALT-008",
+      "change_set": [{"type": "CHANGE_TO_APPROVED_TERMINAL", "destination_terminal_id": "TRM-C"}, {"type": "ADD_ORDER_APPROVED_SERVICE", "service_id": "SVC-AC-01"}],
+      "impacted_order_ids": ["ORD-008"],
+      "baseline_order_update": {"order_id": "ORD-008", "input_state": "VALID", "eligibility_state": "INELIGIBLE", "assignment_state": "NOT_APPLICABLE", "alternative_state": "AVAILABLE", "primary_reason_code": "TERMINAL_NOT_COMPATIBLE", "display_badges": ["조건부 대안 있음"], "alternative_scenario_id": "SCN-ALT-008"},
+      "alternative_run_order_outcome": {"order_id": "ORD-008", "input_state": "VALID", "eligibility_state": "ELIGIBLE", "assignment_state": "ASSIGNED", "alternative_state": "AVAILABLE", "primary_reason_code": "ALTERNATIVE_AVAILABLE"},
+      "assignment_deltas": [{"order_id": "ORD-008", "change_type": "ADDED", "before_assignment": null, "after_assignment": {"order_id": "ORD-008", "service_id": "SVC-AC-01", "wagon_id": "WGN-AC-01", "slot_id": "SLT-AC-01"}}],
+      "validator_status": "PASS",
+      "expected_assignment": {"service_id": "SVC-AC-01", "wagon_id": "WGN-AC-01", "slot_id": "SLT-AC-01"}
+    },
+    "ORD-007": {
+      "http_status": 200,
+      "request": {"order_id": "ORD-007", "adjustment_types": ["ADD_ORDER_APPROVED_SERVICE"]},
+      "order_id": "ORD-007",
+      "alternative_state": "NONE",
+      "status": "NO_FEASIBLE_ALTERNATIVE",
+      "change_set": [],
+      "baseline_order_update": {"order_id": "ORD-007", "input_state": "VALID", "eligibility_state": "INELIGIBLE", "assignment_state": "NOT_APPLICABLE", "alternative_state": "NONE", "primary_reason_code": "TUNNEL_HEIGHT_EXCEEDED", "display_badges": []},
+      "expected_status": "NO_FEASIBLE_ALTERNATIVE",
+      "reason_code": "ALTERNATIVE_REQUIRES_FORBIDDEN_CHANGE"
+    },
+    "ORD-009": {
+      "http_status": 200,
+      "request": {"order_id": "ORD-009", "adjustment_types": ["ADD_ORDER_APPROVED_SERVICE"]},
+      "order_id": "ORD-009",
+      "alternative_state": "NONE",
+      "status": "NO_FEASIBLE_ALTERNATIVE",
+      "change_set": [{"type": "ADD_ORDER_APPROVED_SERVICE", "service_id": "SVC-NEXT-01"}],
+      "baseline_order_update": {"order_id": "ORD-009", "input_state": "VALID", "eligibility_state": "INELIGIBLE", "assignment_state": "NOT_APPLICABLE", "alternative_state": "NONE", "primary_reason_code": "DUE_TIME_EXCEEDED", "display_badges": []},
+      "expected_status": "NO_FEASIBLE_ALTERNATIVE",
+      "reason_code": "DUE_TIME_EXCEEDED"
+    }
+  },
+  "negative_api_cases": {
+    "TC-10": {
+      "http_status": 409,
+      "request": {"order_id": "ORD-007", "adjustment_types": ["CHANGE_ROUTE_CLEARANCE"]},
+      "error_code": "POLICY_VIOLATION"
+    }
+  }
+}

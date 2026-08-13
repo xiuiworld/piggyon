@@ -1,0 +1,286 @@
+{
+  "schema_version": "1.0.0",
+  "scenario_id": "SCN-CANONICAL-V1",
+  "scenario_type": "BASELINE",
+  "as_of": "2026-08-17T08:00:00+09:00",
+  "timezone": "Asia/Seoul",
+  "baseline_service_ids": ["SVC-AM-01"],
+
+  "assumptions": [
+    {
+      "assumption_id": "ASM-001",
+      "source_type": "DEMO_ASSUMPTION",
+      "description": "모든 운행·터미널·화차·슬롯 수치와 가상 화주 위치는 데모용 값이다.",
+      "impact_scope": "entire_scenario"
+    },
+    {
+      "assumption_id": "ASM-002",
+      "source_type": "DEMO_ASSUMPTION",
+      "description": "주문 한 건은 트레일러 한 대이며 슬롯 하나를 점유한다.",
+      "impact_scope": "assignment"
+    }
+  ],
+
+  "shippers": [
+    {
+      "shipper_id": "SHP-01",
+      "display_name": "화주 A",
+      "pickup_geo": {"lat": 37.50, "lng": 127.02},
+      "delivery_geo": {"lat": 35.17, "lng": 129.06}
+    },
+    {
+      "shipper_id": "SHP-02",
+      "display_name": "화주 B",
+      "pickup_geo": {"lat": 37.46, "lng": 126.71},
+      "delivery_geo": {"lat": 35.14, "lng": 129.06}
+    },
+    {
+      "shipper_id": "SHP-03",
+      "display_name": "화주 C",
+      "pickup_geo": {"lat": 37.40, "lng": 127.11},
+      "delivery_geo": {"lat": 36.35, "lng": 127.38}
+    },
+    {
+      "shipper_id": "SHP-04",
+      "display_name": "화주 D",
+      "pickup_geo": {"lat": 37.57, "lng": 126.98},
+      "delivery_geo": {"lat": 35.12, "lng": 129.04}
+    },
+    {
+      "shipper_id": "SHP-05",
+      "display_name": "화주 E",
+      "pickup_geo": {"lat": 37.32, "lng": 126.83},
+      "delivery_geo": {"lat": 35.10, "lng": 129.03}
+    }
+  ],
+
+  "terminals": [
+    {
+      "terminal_id": "TRM-A",
+      "display_name": "합류 터미널 A",
+      "geo": {"lat": 37.45, "lng": 126.43},
+      "operating_window": {"open": "06:00", "close": "22:00"},
+      "intake_cutoff_minutes": 90,
+      "minimum_handling_minutes": 45,
+      "supported_tags": ["TRAILER_STANDARD", "TRAILER_TALL"]
+    },
+    {
+      "terminal_id": "TRM-B",
+      "display_name": "도착 터미널 B",
+      "geo": {"lat": 35.12, "lng": 129.04},
+      "operating_window": {"open": "06:00", "close": "23:00"},
+      "minimum_handling_minutes": 45,
+      "supported_tags": ["TRAILER_STANDARD"]
+    },
+    {
+      "terminal_id": "TRM-C",
+      "display_name": "대체 터미널 C",
+      "geo": {"lat": 36.35, "lng": 127.38},
+      "operating_window": {"open": "06:00", "close": "22:00"},
+      "minimum_handling_minutes": 30,
+      "supported_tags": ["TRAILER_STANDARD", "TRAILER_TALL"]
+    }
+  ],
+
+  "route_constraints": [
+    {"route_constraint_id": "RTC-AB", "max_height_mm": 4000, "max_width_mm": 2600, "max_weight_kg": 24000},
+    {"route_constraint_id": "RTC-AC", "max_height_mm": 4200, "max_width_mm": 2600, "max_weight_kg": 24000}
+  ],
+
+  "services": [
+    {
+      "service_id": "SVC-AM-01",
+      "origin_terminal_id": "TRM-A",
+      "destination_terminal_id": "TRM-B",
+      "departure_at": "2026-08-17T12:00:00+09:00",
+      "arrival_at": "2026-08-17T16:00:00+09:00",
+      "planning_cutoff_at": "2026-08-17T10:30:00+09:00",
+      "route_constraint_id": "RTC-AB",
+      "available": true
+    },
+    {
+      "service_id": "SVC-NEXT-01",
+      "origin_terminal_id": "TRM-A",
+      "destination_terminal_id": "TRM-B",
+      "departure_at": "2026-08-17T17:00:00+09:00",
+      "arrival_at": "2026-08-17T21:00:00+09:00",
+      "planning_cutoff_at": "2026-08-17T15:30:00+09:00",
+      "route_constraint_id": "RTC-AB",
+      "available": true
+    },
+    {
+      "service_id": "SVC-AC-01",
+      "origin_terminal_id": "TRM-A",
+      "destination_terminal_id": "TRM-C",
+      "departure_at": "2026-08-17T13:30:00+09:00",
+      "arrival_at": "2026-08-17T17:00:00+09:00",
+      "planning_cutoff_at": "2026-08-17T12:00:00+09:00",
+      "route_constraint_id": "RTC-AC",
+      "available": true
+    }
+  ],
+
+  "wagons": [
+    {"wagon_id": "WGN-AM-01", "service_id": "SVC-AM-01", "max_total_weight_kg": 60000, "available": true, "display_order": 1},
+    {"wagon_id": "WGN-NEXT-01", "service_id": "SVC-NEXT-01", "max_total_weight_kg": 48000, "available": true, "display_order": 1},
+    {"wagon_id": "WGN-AC-01", "service_id": "SVC-AC-01", "max_total_weight_kg": 48000, "available": true, "display_order": 1}
+  ],
+
+  "slots": [
+    {
+      "slot_id": "SLT-AM-01", "wagon_id": "WGN-AM-01", "position": 1,
+      "display": {"x": 12, "y": 50},
+      "max_weight_kg": 24000,
+      "max_dimensions_mm": {"length": 13600, "width": 2600, "height": 4000},
+      "supported_tags": ["TRAILER_STANDARD"], "available": true
+    },
+    {
+      "slot_id": "SLT-AM-02", "wagon_id": "WGN-AM-01", "position": 2,
+      "display": {"x": 50, "y": 50},
+      "max_weight_kg": 24000,
+      "max_dimensions_mm": {"length": 13600, "width": 2600, "height": 4000},
+      "supported_tags": ["TRAILER_STANDARD"], "available": true
+    },
+    {
+      "slot_id": "SLT-AM-03", "wagon_id": "WGN-AM-01", "position": 3,
+      "display": {"x": 88, "y": 50},
+      "max_weight_kg": 24000,
+      "max_dimensions_mm": {"length": 13600, "width": 2600, "height": 4000},
+      "supported_tags": ["TRAILER_STANDARD"], "available": true
+    },
+    {
+      "slot_id": "SLT-NEXT-01", "wagon_id": "WGN-NEXT-01", "position": 1,
+      "display": {"x": 30, "y": 50},
+      "max_weight_kg": 24000,
+      "max_dimensions_mm": {"length": 13600, "width": 2600, "height": 4000},
+      "supported_tags": ["TRAILER_STANDARD"], "available": true
+    },
+    {
+      "slot_id": "SLT-NEXT-02", "wagon_id": "WGN-NEXT-01", "position": 2,
+      "display": {"x": 70, "y": 50},
+      "max_weight_kg": 24000,
+      "max_dimensions_mm": {"length": 13600, "width": 2600, "height": 4000},
+      "supported_tags": ["TRAILER_STANDARD"], "available": true
+    },
+    {
+      "slot_id": "SLT-AC-01", "wagon_id": "WGN-AC-01", "position": 1,
+      "display": {"x": 30, "y": 50},
+      "max_weight_kg": 24000,
+      "max_dimensions_mm": {"length": 13600, "width": 2600, "height": 4200},
+      "supported_tags": ["TRAILER_STANDARD", "TRAILER_TALL"], "available": true
+    },
+    {
+      "slot_id": "SLT-AC-02", "wagon_id": "WGN-AC-01", "position": 2,
+      "display": {"x": 70, "y": 50},
+      "max_weight_kg": 24000,
+      "max_dimensions_mm": {"length": 13600, "width": 2600, "height": 4200},
+      "supported_tags": ["TRAILER_STANDARD", "TRAILER_TALL"], "available": true
+    }
+  ],
+
+  "orders": [
+    {
+      "order_id": "ORD-001", "shipper_id": "SHP-01",
+      "origin_terminal_ids": ["TRM-A"], "destination_terminal_ids": ["TRM-B"],
+      "ready_at": "2026-08-17T09:00:00+09:00", "due_at": "2026-08-17T18:00:00+09:00",
+      "gross_weight_kg": 20000,
+      "dimensions_mm": {"length": 13600, "width": 2500, "height": 3900},
+      "compatibility_tags": ["TRAILER_STANDARD"], "priority_class": "P1",
+      "adjustment_window": null
+    },
+    {
+      "order_id": "ORD-002", "shipper_id": "SHP-02",
+      "origin_terminal_ids": ["TRM-A"], "destination_terminal_ids": ["TRM-B"],
+      "ready_at": "2026-08-17T09:15:00+09:00", "due_at": "2026-08-17T17:30:00+09:00",
+      "gross_weight_kg": 19500,
+      "dimensions_mm": {"length": 13600, "width": 2500, "height": 3900},
+      "compatibility_tags": ["TRAILER_STANDARD"], "priority_class": "P1",
+      "adjustment_window": null
+    },
+    {
+      "order_id": "ORD-003", "shipper_id": "SHP-03",
+      "origin_terminal_ids": ["TRM-A"], "destination_terminal_ids": ["TRM-B"],
+      "ready_at": "2026-08-17T09:30:00+09:00", "due_at": "2026-08-17T19:00:00+09:00",
+      "gross_weight_kg": 18000,
+      "dimensions_mm": {"length": 13600, "width": 2500, "height": 3900},
+      "compatibility_tags": ["TRAILER_STANDARD"], "priority_class": "P2",
+      "adjustment_window": null
+    },
+    {
+      "order_id": "ORD-004", "shipper_id": "SHP-04",
+      "origin_terminal_ids": ["TRM-A"], "destination_terminal_ids": ["TRM-B"],
+      "ready_at": "2026-08-17T09:45:00+09:00", "due_at": "2026-08-17T19:00:00+09:00",
+      "gross_weight_kg": 18200,
+      "dimensions_mm": {"length": 13600, "width": 2500, "height": 3900},
+      "compatibility_tags": ["TRAILER_STANDARD"], "priority_class": "P3",
+      "adjustment_window": null
+    },
+    {
+      "order_id": "ORD-005", "shipper_id": "SHP-05",
+      "origin_terminal_ids": ["TRM-A"], "destination_terminal_ids": ["TRM-B"],
+      "ready_at": "2026-08-17T11:00:00+09:00", "due_at": "2026-08-17T23:00:00+09:00",
+      "gross_weight_kg": 17500,
+      "dimensions_mm": {"length": 13600, "width": 2500, "height": 3900},
+      "compatibility_tags": ["TRAILER_STANDARD"], "priority_class": "P2",
+      "adjustment_window": {"alternative_service_ids": ["SVC-NEXT-01"]}
+    },
+    {
+      "order_id": "ORD-006", "shipper_id": "SHP-01",
+      "origin_terminal_ids": ["TRM-A"], "destination_terminal_ids": ["TRM-B"],
+      "ready_at": "2026-08-17T09:00:00+09:00", "due_at": "2026-08-17T18:00:00+09:00",
+      "gross_weight_kg": null,
+      "dimensions_mm": {"length": 13600, "width": 2500, "height": 3900},
+      "compatibility_tags": ["TRAILER_STANDARD"], "priority_class": "P2",
+      "adjustment_window": null
+    },
+    {
+      "order_id": "ORD-007", "shipper_id": "SHP-02",
+      "origin_terminal_ids": ["TRM-A"], "destination_terminal_ids": ["TRM-B"],
+      "ready_at": "2026-08-17T09:00:00+09:00", "due_at": "2026-08-17T19:00:00+09:00",
+      "gross_weight_kg": 19000,
+      "dimensions_mm": {"length": 13600, "width": 2500, "height": 4300},
+      "compatibility_tags": ["TRAILER_STANDARD"], "priority_class": "P2",
+      "adjustment_window": null
+    },
+    {
+      "order_id": "ORD-008", "shipper_id": "SHP-03",
+      "origin_terminal_ids": ["TRM-A"], "destination_terminal_ids": ["TRM-B"],
+      "ready_at": "2026-08-17T10:00:00+09:00", "due_at": "2026-08-17T20:00:00+09:00",
+      "gross_weight_kg": 19000,
+      "dimensions_mm": {"length": 13600, "width": 2500, "height": 4100},
+      "compatibility_tags": ["TRAILER_TALL"], "priority_class": "P2",
+      "adjustment_window": {
+        "alternative_destination_terminal_ids": ["TRM-C"],
+        "alternative_service_ids": ["SVC-AC-01"]
+      }
+    },
+    {
+      "order_id": "ORD-009", "shipper_id": "SHP-04",
+      "origin_terminal_ids": ["TRM-A"], "destination_terminal_ids": ["TRM-B"],
+      "ready_at": "2026-08-17T09:00:00+09:00", "due_at": "2026-08-17T15:00:00+09:00",
+      "gross_weight_kg": 18000,
+      "dimensions_mm": {"length": 13600, "width": 2500, "height": 3900},
+      "compatibility_tags": ["TRAILER_STANDARD"], "priority_class": "P1",
+      "adjustment_window": {"alternative_service_ids": ["SVC-NEXT-01"]}
+    }
+  ],
+
+  "policy": {
+    "policy_id": "POL-DEMO-001",
+    "policy_version": "1.0.0",
+    "priority_scores": {"P1": 3, "P2": 2, "P3": 1},
+    "objective_order": [
+      "maximize_assigned_order_count",
+      "maximize_priority_score",
+      "minimize_due_at",
+      "canonical_order_slot"
+    ],
+    "allowed_adjustments": ["ADD_ORDER_APPROVED_SERVICE", "CHANGE_TO_APPROVED_TERMINAL"],
+    "forbidden_adjustments": [
+      "CHANGE_WEIGHT_LIMIT",
+      "CHANGE_DIMENSION_LIMIT",
+      "CHANGE_ROUTE_CLEARANCE",
+      "CHANGE_DUE_AT"
+    ]
+  }
+}
