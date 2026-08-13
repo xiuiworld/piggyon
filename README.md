@@ -79,21 +79,20 @@ tests/               pytest
 `STORAGE_BACKEND=supabase`로 바꾼다. 자격증명이 없거나 접속이 안 되면 경고를 남기고
 인메모리로 내려간다(09 §8의 강등 허용).
 
-Supabase 사용 시 필요한 테이블:
+스키마는 `supabase/migrations/`에 있다. 적용:
 
-```sql
-create table scenarios (
-  scenario_id          text primary key,
-  scenario_name        text not null,
-  state                text not null,
-  created_at           timestamptz not null,
-  as_of                timestamptz not null,
-  baseline_service_ids jsonb not null,
-  policy_version       text not null,
-  assumption_ids       jsonb not null,
-  input_snapshot       jsonb not null
-);
+```bash
+npx supabase@latest db push
 ```
+
+## 배포 (Render)
+
+`render.yaml` 블루프린트가 있다. Render 대시보드에서 **New → Blueprint**로 이 저장소를
+가리키면 된다. `SUPABASE_URL`·`SUPABASE_KEY`는 `sync: false`라 Render가 값을 물어보고,
+저장소에는 들어가지 않는다.
+
+무료 플랜 웹 서비스는 유휴 시 슬립에 들어가 첫 요청이 느리다. 심사 기간 동안 URL이
+살아 있어야 한다면(08) 유료 인스턴스나 외부 핑을 고려한다.
 
 ## 참고 문서
 

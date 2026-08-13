@@ -1,0 +1,22 @@
+# Render Blueprint. Dashboard -> New -> Blueprint -> point at this repo.
+# SUPABASE_URL / SUPABASE_KEY are marked sync:false, so Render prompts for them
+# instead of storing secrets in git.
+
+services:
+  - type: web
+    name: piggyon-api
+    runtime: python
+    plan: free
+    region: singapore
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.13.4"
+      - key: STORAGE_BACKEND
+        value: supabase
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
