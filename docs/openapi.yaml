@@ -356,7 +356,7 @@ components:
         orders: {type: array, items: {$ref: '#/components/schemas/OrderValidation'}}
     OrderValidation:
       type: object
-      required: [order_id, input_state, reason_codes, eligible_slot_ids, eligibility_state]
+      required: [order_id, input_state, reason_codes, missing_fields, eligible_slot_ids, eligibility_state, primary_reason_code]
       properties:
         order_id: {type: string}
         input_state: {type: string, enum: [VALID, REVIEW_REQUIRED]}
@@ -369,7 +369,7 @@ components:
           description: The single reason to show, chosen by the 02 §6.1 family priority.
     Run:
       type: object
-      required: [run_id, scenario_id, solver_status, run_state, is_optimal, validator_status, reproducibility, assignments, order_outcomes]
+      required: [run_id, scenario_id, solver_status, run_state, is_optimal, validator_status, validator_findings, reproducibility, assignments, order_outcomes]
       properties:
         run_id: {type: string}
         scenario_id: {type: string}
@@ -419,7 +419,7 @@ components:
         after_assignment: {anyOf: [{$ref: '#/components/schemas/Assignment'}, {type: 'null'}]}
     OrderOutcome:
       type: object
-      required: [order_id, input_state, eligibility_state, assignment_state, alternative_state, primary_reason_code]
+      required: [order_id, input_state, eligibility_state, assignment_state, alternative_state, primary_reason_code, evidence, next_actions, display_label, display_badges, alternative_scenario_id]
       properties:
         order_id: {type: string}
         input_state: {type: string, enum: [VALID, REVIEW_REQUIRED]}
