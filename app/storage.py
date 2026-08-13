@@ -72,6 +72,12 @@ class Store(Protocol):
 
     def list_run_ids(self, scenario_id: str) -> list[str]: ...
 
+    def save_explanation(self, run_id: str, result: dict[str, Any]) -> None: ...
+
+    def get_explanation(self, run_id: str) -> dict[str, Any] | None: ...
+
+    def clear_explanation(self, run_id: str) -> None: ...
+
     def update_order_outcome(
         self, run_id: str, order_id: str, outcome: dict[str, Any]
     ) -> None:
@@ -102,6 +108,7 @@ class MemoryStore:
         self._scenarios: dict[str, dict[str, Any]] = {}
         self._validations: dict[str, dict[str, Any]] = {}
         self._runs: dict[str, dict[str, Any]] = {}
+        self._explanations: dict[str, dict[str, Any]] = {}
         self._decisions: dict[str, list[dict[str, Any]]] = {}
         self._trace: dict[str, list[dict[str, Any]]] = {}
         self._scenario_seq = 0
@@ -142,6 +149,7 @@ class MemoryStore:
                 rid for rid, run in self._runs.items() if run.get("scenario_id") == scenario_id
             ]:
                 self._runs.pop(run_id, None)
+                self._explanations.pop(run_id, None)
                 self._decisions.pop(run_id, None)
 
     def update_scenario_state(self, scenario_id: str, state: str) -> None:
@@ -183,6 +191,18 @@ class MemoryStore:
             return sorted(
                 rid for rid, run in self._runs.items() if run.get("scenario_id") == scenario_id
             )
+
+    def save_explanation(self, run_id: str, result: dict[str, Any]) -> None:
+        with self._lock:
+            self._explanations[run_id] = result
+
+    def get_explanation(self, run_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            return self._explanations.get(run_id)
+
+    def clear_explanation(self, run_id: str) -> None:
+        with self._lock:
+            self._explanations.pop(run_id, None)
 
     def update_order_outcome(
         self, run_id: str, order_id: str, outcome: dict[str, Any]
@@ -358,6 +378,20 @@ class SupabaseStore:
             .execute()
         )
         return sorted(row["run_id"] for row in (response.data or []))
+
+    def save_explanation(self, run_id: str, result: dict[str, Any]) -> None:
+        self._client.table(RUNS_TABLE).update({"explanation": result}).eq(
+            "run_id", run_id
+        ).execute()
+
+    def get_explanation(self, run_id: str) -> dict[str, Any] | None:
+        row = self._one(RUNS_TABLE, "run_id", run_id, "explanation")
+        return row.get("explanation") if row else None
+
+    def clear_explanation(self, run_id: str) -> None:
+        self._client.table(RUNS_TABLE).update({"explanation": None}).eq(
+            "run_id", run_id
+        ).execute()
 
     def update_order_outcome(
         self, run_id: str, order_id: str, outcome: dict[str, Any]

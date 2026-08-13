@@ -169,6 +169,11 @@ def create_alternative(
         store.save_validation(outcome.alternative_scenario_id, outcome.alternative_validation)
 
     store.update_order_outcome(run_id, payload.order_id, baseline_update)
+    # The order's alternative axis just moved, and its card is written from that
+    # axis: 기본안 불가·대안 미검토 becomes 기본안 불가 with a badge. The stored
+    # explanation now describes a state the run has left, so it goes and the
+    # next read rebuilds it.
+    store.clear_explanation(run_id)
 
     event = {
         "run_id": run_id,
@@ -281,6 +286,10 @@ def export_run(run_id: str, store: Store = Depends(get_store)) -> ExportBundle:
             "validation_result": validation,
             "decisions": store.list_decisions(run_id),
             "trace_events": store.list_trace(run["scenario_id"]),
+            # Read, never generated here. A bundle that produced its own
+            # wording would describe the same run in different words from the
+            # screen it is supposed to evidence.
+            "explanation": store.get_explanation(run_id),
         }
     )
 
