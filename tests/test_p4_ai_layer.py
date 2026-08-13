@@ -177,7 +177,12 @@ def test_missing_fields_names_the_axis_not_the_block() -> None:
 
 
 def test_terminal_ids_outside_the_closed_list_are_dropped() -> None:
-    vocabulary = {"terminal_ids": ["TRM-A (합류 터미널 A)", "TRM-B (도착 터미널 B)"]}
+    vocabulary = {
+        "terminal_ids": [
+            {"id": "TRM-A", "name": "합류 터미널 A"},
+            {"id": "TRM-B", "name": "도착 터미널 B"},
+        ]
+    }
 
     draft = intake._sanitise(
         {"origin_terminal_ids": ["TRM-A"], "destination_terminal_ids": ["TRM-ZZ"]},
@@ -206,5 +211,40 @@ def test_review_reasons_pair_each_gap_with_a_code() -> None:
 def test_default_vocabulary_comes_from_the_canonical_scenario() -> None:
     vocabulary = intake.default_vocabulary()
 
-    assert any(entry.startswith("TRM-A") for entry in vocabulary["terminal_ids"])
+    assert any(entry["id"] == "TRM-A" for entry in vocabulary["terminal_ids"])
     assert vocabulary["priority_class"] == ["P1", "P2", "P3"]
+
+
+def test_id_echoed_with_its_display_name_is_recovered() -> None:
+    """The model answers "TRM-A (합류 터미널 A)"; that means TRM-A.
+
+    Nulling it would throw away a value the request did supply — this is
+    exactly what the deployed model did to every terminal on the sample.
+    """
+    vocabulary = intake.default_vocabulary()
+
+    draft = intake._sanitise(
+        {
+            "shipper_id": "SHP-01 (화주 A)",
+            "origin_terminal_ids": ["TRM-A (합류 터미널 A)"],
+            "destination_terminal_ids": ["TRM-B (도착 터미널 B)"],
+        },
+        vocabulary,
+    )
+
+    assert draft["shipper_id"] == "SHP-01"
+    assert draft["origin_terminal_ids"] == ["TRM-A"]
+    assert draft["destination_terminal_ids"] == ["TRM-B"]
+
+
+def test_shipper_outside_the_closed_list_is_dropped() -> None:
+    draft = intake._sanitise({"shipper_id": "SHP-99"}, intake.default_vocabulary())
+
+    assert draft["shipper_id"] is None
+
+
+def test_vocabulary_separates_id_from_name() -> None:
+    """A combined string invites the model to copy it back as an id."""
+    vocabulary = intake.default_vocabulary()
+
+    assert {"id": "TRM-A", "name": "합류 터미널 A"} in vocabulary["terminal_ids"]

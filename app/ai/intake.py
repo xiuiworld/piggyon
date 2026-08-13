@@ -192,17 +192,22 @@ def _missing_fields(draft: dict[str, Any]) -> list[str]:
     return missing
 
 
-def default_vocabulary() -> dict[str, list[str]]:
-    """The closed id lists, read from the canonical scenario."""
+def default_vocabulary() -> dict[str, Any]:
+    """The closed id lists, read from the canonical scenario.
+
+    Ids and names are separate fields rather than one "TRM-A (합류 터미널 A)"
+    string: given the combined form the model copies it back whole, and
+    "TRM-A (합류 터미널 A)" is not an id.
+    """
     from app.canonical import load_canonical_snapshot
 
     snapshot = load_canonical_snapshot()
     return {
         "terminal_ids": [
-            f"{t['terminal_id']} ({t['display_name']})" for t in snapshot["terminals"]
+            {"id": t["terminal_id"], "name": t["display_name"]} for t in snapshot["terminals"]
         ],
         "shipper_ids": [
-            f"{s['shipper_id']} ({s['display_name']})" for s in snapshot["shippers"]
+            {"id": s["shipper_id"], "name": s["display_name"]} for s in snapshot["shippers"]
         ],
         "compatibility_tags": ["TRAILER_STANDARD", "TRAILER_TALL"],
         "priority_class": ["P1", "P2", "P3"],
@@ -240,11 +245,17 @@ def _sanitise(
             if isinstance(value, list):
                 # An id outside the closed list is an invention, not a value.
                 ids = [
-                    v
-                    for v in value
-                    if isinstance(v, str) and (not known_terminals or v in known_terminals)
+                    bare
+                    for bare in (_bare_id(v) for v in value)
+                    if bare and (not known_terminals or bare in known_terminals)
                 ]
                 clean[field] = ids or None
+        elif field == "shipper_id":
+            bare = _bare_id(value)
+            known_shippers = _ids_from(vocabulary, "shipper_ids")
+            clean[field] = (
+                bare if bare and (not known_shippers or bare in known_shippers) else None
+            )
         elif field == "compatibility_tags":
             allowed = {"TRAILER_STANDARD", "TRAILER_TALL"}
             if isinstance(value, list):
@@ -280,11 +291,25 @@ def _sanitise_dimensions(value: Any) -> dict[str, int | None] | None:
     return kept if any(v is not None for v in kept.values()) else None
 
 
-def _ids_from(vocabulary: dict[str, list[str]] | None, key: str) -> set[str]:
-    """Pull bare ids out of the "TRM-A (합류 터미널 A)" display entries."""
+def _ids_from(vocabulary: dict[str, Any] | None, key: str) -> set[str]:
     if not vocabulary:
         return set()
-    return {entry.split(" ", 1)[0] for entry in vocabulary.get(key, [])}
+    return {
+        entry["id"] if isinstance(entry, dict) else str(entry)
+        for entry in vocabulary.get(key, [])
+    }
+
+
+def _bare_id(value: Any) -> str | None:
+    """Recover the id when a name was appended to it.
+
+    Belt and braces alongside the structured vocabulary: a model that answers
+    "TRM-A (합류 터미널 A)" means TRM-A, and silently nulling the field would
+    lose a value the operator did supply.
+    """
+    if not isinstance(value, str):
+        return None
+    return value.split(" ", 1)[0].strip() or None
 
 
 # `\b` is useless as a closing boundary here: Korean letters are word
