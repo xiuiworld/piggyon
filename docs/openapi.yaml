@@ -3,6 +3,11 @@ info:
   title: Rail Slot Planning MVP API
   version: 1.0.0
   description: All operational values in canonical-v1 are DEMO_ASSUMPTION.
+servers:
+  - url: http://127.0.0.1:8000
+    description: Local development
+  - url: https://piggyon-api.onrender.com
+    description: Deployed demo. Free instance; the first request after idle is slow.
 paths:
   /v1/scenarios:
     post:
@@ -31,6 +36,8 @@ paths:
         content: {application/json: {schema: {$ref: '#/components/schemas/RunRequest'}}}
       responses:
         '201': {description: Run completed, content: {application/json: {schema: {$ref: '#/components/schemas/Run'}}}}
+        '400': {$ref: '#/components/responses/InvalidInput'}
+        '404': {$ref: '#/components/responses/NotFound'}
         '422': {$ref: '#/components/responses/ValidationRequired'}
   /v1/runs/{run_id}:
     get:
@@ -50,6 +57,7 @@ paths:
         '201': {description: Alternative run, content: {application/json: {schema: {$ref: '#/components/schemas/AlternativeResult'}}}}
         '200': {description: Permitted alternatives were searched but none is feasible, content: {application/json: {schema: {$ref: '#/components/schemas/AlternativeUnavailableResult'}}}}
         '400': {$ref: '#/components/responses/InvalidInput'}
+        '404': {$ref: '#/components/responses/NotFound'}
         '409': {$ref: '#/components/responses/PolicyViolation'}
   /v1/runs/{run_id}/decisions:
     post:
@@ -60,6 +68,8 @@ paths:
         content: {application/json: {schema: {$ref: '#/components/schemas/DecisionRequest'}}}
       responses:
         '201': {description: Decision recorded, content: {application/json: {schema: {$ref: '#/components/schemas/Decision'}}}}
+        '400': {$ref: '#/components/responses/InvalidInput'}
+        '404': {$ref: '#/components/responses/NotFound'}
         '409': {$ref: '#/components/responses/RunNotAcceptable'}
   /v1/runs/{run_id}/export:
     get:
@@ -392,7 +402,13 @@ components:
         assignment_state: {type: string, enum: [ASSIGNED, UNASSIGNED, NOT_APPLICABLE]}
         alternative_state: {type: string, enum: [AVAILABLE, NONE, NOT_SEARCHED]}
         primary_reason_code: {type: string}
-        evidence: {type: object}
+        evidence:
+          type: object
+          additionalProperties: true
+          description: >-
+            Reason-specific supporting values, keyed by whatever the primary
+            reason needs (`eligible_slot_ids`, limit-versus-actual pairs). Open
+            by design; read defensively.
         next_actions: {type: array, items: {type: string}}
         display_label:
           anyOf: [{type: string}, {type: 'null'}]
@@ -420,7 +436,7 @@ components:
         parent_run_id: {type: string}
         alternative_scenario_id: {type: string}
         alternative_run_id: {type: string}
-        change_set: {type: array, items: {type: object}}
+        change_set: {type: array, items: {$ref: '#/components/schemas/ChangeSetEntry'}}
         impacted_order_ids: {type: array, minItems: 1, items: {type: string}}
         baseline_order_update: {$ref: '#/components/schemas/OrderOutcome'}
         alternative_run_order_outcome: {$ref: '#/components/schemas/OrderOutcome'}
@@ -433,9 +449,30 @@ components:
         order_id: {type: string}
         alternative_state: {type: string, const: NONE}
         status: {type: string, const: NO_FEASIBLE_ALTERNATIVE}
-        change_set: {type: array, items: {type: object}}
+        change_set:
+          type: array
+          items: {$ref: '#/components/schemas/ChangeSetEntry'}
+          description: Empty when the permitted adjustments produced no change to try.
         baseline_order_update: {$ref: '#/components/schemas/OrderOutcome'}
         reason_code: {type: string}
+    ChangeSetEntry:
+      description: >-
+        One approved adjustment applied to the derived scenario. Only the two
+        allowed_adjustments appear here; a forbidden type is rejected with 409
+        before any change_set is built.
+      oneOf:
+        - type: object
+          title: AddOrderToApprovedService
+          required: [type, service_id]
+          properties:
+            type: {type: string, const: ADD_ORDER_APPROVED_SERVICE}
+            service_id: {type: string}
+        - type: object
+          title: ChangeToApprovedTerminal
+          required: [type, destination_terminal_id]
+          properties:
+            type: {type: string, const: CHANGE_TO_APPROVED_TERMINAL}
+            destination_terminal_id: {type: string}
     DecisionRequest:
       type: object
       required: [decision_state, actor_role, reason, selected_plan]
@@ -470,7 +507,10 @@ components:
         event_id: {type: string}
         event_type: {type: string, enum: [SCENARIO_CREATED, VALIDATION_COMPLETED, RUN_COMPLETED, ALTERNATIVE_CREATED, DECISION_RECORDED]}
         occurred_at: {type: string, format: date-time}
-        payload: {type: object}
+        payload:
+          type: object
+          additionalProperties: true
+          description: Event-type-specific body. Open by design; read defensively.
     IntakeRequest:
       type: object
       required: [text]
@@ -572,5 +612,20 @@ components:
       properties:
         code: {type: string, enum: [INVALID_INPUT, SCENARIO_NOT_FOUND, RUN_NOT_FOUND, VALIDATION_REQUIRED, POLICY_VIOLATION, RUN_NOT_ACCEPTABLE, SOLVER_UNAVAILABLE]}
         message: {type: string}
-        details: {type: array, items: {type: object}}
+        details: {type: array, items: {$ref: '#/components/schemas/ErrorDetail'}}
         trace_id: {type: string}
+    ErrorDetail:
+      type: object
+      additionalProperties: true
+      description: >-
+        Which part of the request failed. The keys present depend on `code`:
+        schema failures carry location/message/type, POLICY_VIOLATION carries
+        adjustment_type, RUN_NOT_ACCEPTABLE carries solver_status and
+        validator_status. Every key is optional; read defensively.
+      properties:
+        location: {type: string, description: 'Dotted path into the request, e.g. body.solver_parameters.'}
+        message: {type: string}
+        type: {type: string, description: 'Validator tag, e.g. missing or extra_forbidden.'}
+        adjustment_type: {type: string}
+        solver_status: {type: string}
+        validator_status: {type: string}
