@@ -6,6 +6,21 @@
 > 이 저장소의 모든 운영 수치는 `DEMO_ASSUMPTION` 목업이다. 실제 운행 가능성이나
 > 운영 성과의 근거로 사용하지 않는다.
 
+## 배포
+
+- API: <https://piggyon-api.onrender.com>
+- 문서: <https://piggyon-api.onrender.com/docs>
+- 헬스체크: <https://piggyon-api.onrender.com/health>
+
+저장소는 Supabase(`ap-northeast-2`), 배포는 Render 블루프린트다. 무료 인스턴스는
+유휴 시 슬립에 들어가므로 첫 요청이 느릴 수 있다.
+
+배포본 검증:
+
+```bash
+python scripts/smoke.py https://piggyon-api.onrender.com
+```
+
 ## 실행
 
 ```bash
@@ -41,7 +56,7 @@ python scripts/smoke.py
 | P3 조건부 대안 | 완료 |
 | P4 생성형 AI 레이어 (인테이크 + 설명) | 완료 (키 없이도 동작) |
 | P5 결정 · 저장 · 조회 · export | 완료 |
-| P6 통합 · 배포 | 코드 완료, 배포는 자격증명 대기 |
+| P6 통합 · 배포 | 완료 (Supabase + Render, 배포본에서 5장면 통과) |
 
 ### 엔드포인트
 
@@ -148,8 +163,8 @@ npx supabase@latest db push
 ## 배포 (Render)
 
 `render.yaml` 블루프린트가 있다. Render 대시보드에서 **New → Blueprint**로 이 저장소를
-가리키면 된다. `SUPABASE_URL`·`SUPABASE_KEY`는 `sync: false`라 Render가 값을 물어보고,
-저장소에는 들어가지 않는다.
+가리킨다. `SUPABASE_URL`·`SUPABASE_KEY`·`OPENAI_API_KEY`는 `sync: false`라 Render가 값을
+물어보고, 저장소에는 들어가지 않는다.
 
 무료 플랜 웹 서비스는 유휴 시 슬립에 들어가 첫 요청이 느리다. 심사 기간 동안 URL이
 살아 있어야 한다면(08) 유료 인스턴스나 외부 핑을 고려한다.
