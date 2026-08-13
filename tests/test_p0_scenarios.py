@@ -44,6 +44,44 @@ def test_snapshot_round_trips_through_the_store(
     assert ord_006["gross_weight_kg"] is None
 
 
+def test_stored_scenario_is_readable_back(
+    client: TestClient, request_body: dict
+) -> None:
+    scenario_id = client.post("/v1/scenarios", json=request_body).json()["scenario_id"]
+
+    response = client.get(f"/v1/scenarios/{scenario_id}")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["scenario_id"] == scenario_id
+    assert body["state"] == "VALIDATION_REQUIRED"
+    assert body["scenario_name"] == request_body["scenario_name"]
+    assert body["baseline_service_ids"] == request_body["baseline_service_ids"]
+    assert body["policy_version"] == request_body["policy_version"]
+    assert body["assumption_ids"] == request_body["assumption_ids"]
+    # The point of the endpoint: what comes back is the document that was sent,
+    # not a re-serialisation of it. A client can re-submit this and reproduce
+    # the same input_snapshot_sha256.
+    assert body["input_snapshot"] == request_body["input_snapshot"]
+
+
+def test_reading_a_scenario_reflects_its_state(
+    client: TestClient, validated_scenario_id: str
+) -> None:
+    body = client.get(f"/v1/scenarios/{validated_scenario_id}").json()
+
+    assert body["state"] == "READY_TO_SOLVE"
+
+
+def test_reading_an_unknown_scenario_is_not_found(client: TestClient) -> None:
+    response = client.get("/v1/scenarios/SCN-NOPE")
+
+    assert response.status_code == 404
+    body = response.json()
+    assert body["code"] == "SCENARIO_NOT_FOUND"
+    assert body["trace_id"]
+
+
 def test_scenario_ids_are_unique_per_request(
     client: TestClient, request_body: dict
 ) -> None:

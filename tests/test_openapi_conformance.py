@@ -58,6 +58,16 @@ def test_scenario_response_conforms(
     _validate(spec, "Scenario", body)
 
 
+def test_scenario_detail_response_conforms(
+    client: TestClient, request_body: dict, spec: dict
+) -> None:
+    scenario_id = client.post("/v1/scenarios", json=request_body).json()["scenario_id"]
+
+    body = client.get(f"/v1/scenarios/{scenario_id}").json()
+
+    _validate(spec, "ScenarioDetail", body)
+
+
 def test_validation_response_conforms(solved: dict, spec: dict) -> None:
     _validate(spec, "ValidationResult", solved["validation"])
 
