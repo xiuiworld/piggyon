@@ -73,6 +73,32 @@ SCHEMA_VOCABULARY = frozenset(
     }
 )
 
+# Held to by the API, so a card is an object with three strings or the request
+# fails outright. Naming the shape in the prompt is not the same as enforcing it:
+# without this the model may answer with a list of bare strings, and the loop
+# that reads `card.get(...)` dies on the first one -- taking the endpoint the
+# dashboard calls on every render down with it.
+CARDS_SCHEMA: dict = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["cards"],
+    "properties": {
+        "cards": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["order_id", "headline", "detail"],
+                "properties": {
+                    "order_id": {"type": "string"},
+                    "headline": {"type": "string"},
+                    "detail": {"type": "string"},
+                },
+            },
+        }
+    },
+}
+
 SYSTEM_PROMPT = """\
 You write short Korean status cards for a rail slot planning operator.
 
@@ -214,6 +240,8 @@ def _generate(run: dict[str, Any], outcomes: list[dict]) -> list[dict] | None:
     response = client.complete_json(
         SYSTEM_PROMPT,
         user_prompt,
+        schema=CARDS_SCHEMA,
+        schema_name="explanation_cards",
         # Roughly 150 tokens per Korean card, so nine cards need well over the
         # 1200 this started with; a truncated reply is not valid JSON and would
         # drop every card at once.
@@ -223,7 +251,12 @@ def _generate(run: dict[str, Any], outcomes: list[dict]) -> list[dict] | None:
         return None
 
     cards = response.get("cards")
-    return cards if isinstance(cards, list) else None
+    if not isinstance(cards, list):
+        return None
+    # The schema makes every entry an object, but `complete_json` falls back to
+    # a schema-less retry, so one stray string must cost its own card and not
+    # the whole set.
+    return [card for card in cards if isinstance(card, dict)]
 
 
 def rejection_reason_for_text(

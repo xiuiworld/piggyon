@@ -196,6 +196,17 @@ BATCH_SYSTEM_PROMPT = SYSTEM_PROMPT.replace(
 
 MAX_BATCH_ORDERS = 20
 
+# The single-order call is held to INTAKE_SCHEMA by the API, which is what stops
+# the model returning `field_evidence` as bare strings instead of {field,
+# source_text}. The batch call went out without one and did exactly that, and
+# the code that keeps evidence for surviving fields died on the first entry.
+BATCH_SCHEMA: dict = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["orders"],
+    "properties": {"orders": {"type": "array", "items": INTAKE_SCHEMA}},
+}
+
 
 def structure_requests(
     text: str,
@@ -220,6 +231,8 @@ def structure_requests(
     response = client.complete_json(
         BATCH_SYSTEM_PROMPT,
         _user_prompt(text, as_of, vocabulary),
+        schema=BATCH_SCHEMA,
+        schema_name="order_intake_batch",
         max_tokens=max(1200, 500 * 3),
     )
 
@@ -248,10 +261,13 @@ def _finish(
     """The half of `structure_request` that runs after the model has spoken."""
     draft = _sanitise(entry.get("order_draft") or {}, vocabulary)
     missing = _missing_fields(draft)
+    # `isinstance` rather than trust: the schema above makes this shape the
+    # model's only option, but `complete_json` has a schema-less retry, and one
+    # malformed entry must not take the whole request down with it.
     evidence = [
         e
         for e in (entry.get("field_evidence") or [])
-        if draft.get(str(e.get("field", "")).split(".")[0])
+        if isinstance(e, dict) and draft.get(str(e.get("field", "")).split(".")[0])
     ]
 
     return {
