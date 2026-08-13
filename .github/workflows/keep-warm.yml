@@ -1,0 +1,57 @@
+# 심사 기간 동안 배포 URL을 깨워 둔다.
+#
+# 본선 안내 3.4)는 배포 URL을 "심사 기간 동안 언제든 접속 가능한" 상태로 요구한다.
+# Render 무료 인스턴스는 15분 유휴면 슬립에 들어가고, 이 서비스는 ortools를 임포트해
+# 콜드 스타트가 특히 길다. 프론트(Vercel)가 모든 페이지를 서버에서 렌더하며 이 API를
+# 호출하므로, 백엔드가 자고 있으면 평가관은 느린 로딩이 아니라 오류 화면을 볼 수 있다.
+#
+# 5분 간격인 이유: GitHub Actions의 스케줄은 러너가 붐비면 수 분씩 밀린다. 10분 간격은
+# 밀렸을 때 15분 슬립 창을 넘길 수 있어, 여유를 두고 5분으로 잡는다.
+#
+# /health는 Supabase 테이블을 한 번 조회하므로(app/storage.py의 ping) 이 핑 하나가
+# Render 슬립과 Supabase 유휴 정지를 동시에 막는다.
+
+name: keep-warm
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch: # 수동 실행
+
+# 앞선 실행이 콜드 스타트를 기다리는 중이면 겹쳐 돌리지 않는다.
+concurrency:
+  group: keep-warm
+  cancel-in-progress: false
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Wake the API and report storage state
+        run: |
+          echo "$(date -u '+%H:%M:%SZ') pinging"
+          # --max-time 180: 콜드 스타트가 오래 걸려도 깨우는 게 목적이므로 넉넉히 기다린다.
+          # -w 로 실제 소요 시간을 남겨, Actions 로그가 콜드 스타트 기록이 되게 한다.
+          BODY=$(curl -sS --max-time 180 \
+                   -w '\n__TIME__%{time_total}__CODE__%{http_code}' \
+                   https://piggyon-api.onrender.com/health)
+
+          TIME=$(printf '%s' "$BODY" | sed -n 's/.*__TIME__\([0-9.]*\)__CODE__.*/\1/p')
+          CODE=$(printf '%s' "$BODY" | sed -n 's/.*__CODE__\([0-9]*\)$/\1/p')
+          JSON=$(printf '%s' "$BODY" | sed 's/\n*__TIME__.*//')
+
+          echo "HTTP $CODE in ${TIME}s"
+          echo "$JSON"
+
+          [ "$CODE" = "200" ] || { echo "::error::health가 $CODE 를 반환"; exit 1; }
+
+          # 저장소가 인메모리로 폴백했다면 기록은 재시작 때 사라진다. 조용히 넘기지 않는다.
+          case "$JSON" in
+            *'"storage_backend":"memory"'*)
+              echo "::warning::인메모리로 폴백한 상태 — 재시작하면 시나리오·실행 기록이 사라진다" ;;
+          esac
+          case "$JSON" in
+            *'"storage_reachable":false'*)
+              echo "::warning::Supabase 도달 불가로 보고됨" ;;
+          esac
